@@ -1,0 +1,3749 @@
+
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Пропорциональный таймер</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        min-height: 100%;
+      }
+      body {
+        background-color: #000000;
+        color: #e0e0e0;
+        margin: 0;
+        padding: 0;
+        font-family: Consolas, monospace;
+      }
+      .timer-container {
+        border: 1px solid #ffffff;
+        padding: 15px;
+        margin: 10px;
+        border-radius: 5px;
+        background-color: #000000;
+        flex: 0 1 auto;
+        min-width: 300px;
+        max-width: 450px;
+      }
+      .timer-controls {
+        margin: 10px 0;
+      }
+      input[type="number"],
+      input[type="text"],
+      input[type="time"] {
+        width: 60px;
+        background-color: #000000;
+        color: #e0e0e0;
+        border: 1px solid #444;
+        padding: 5px;
+      }
+      .time-display {
+        font-size: 1.2em;
+        margin: 5px 0;
+      }
+      button {
+        margin: 0 5px;
+        padding: 5px 10px;
+        background-color: #000000;
+        color: #e0e0e0;
+        border: 1px solid #444;
+        cursor: pointer;
+      }
+      button:hover {
+        background-color: #222222;
+      }
+      #globalEndTime {
+        margin: 10px;
+        padding: 5px;
+      }
+      button.active-away {
+        background-color: #555 !important;
+      }
+      #globalControls {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        background-color: #000000;
+        padding: 10px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+      }
+      #timersContainer {
+        margin-top: 60px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+      }
+      #appTitle {
+        color: #4caf50;
+        font-size: 22px;
+        font-weight: bold;
+        margin-right: 15px;
+      }
+      /* Фикс (интерфейс): единый стиль подписей полей — подпись всегда
+         рядом со своим полем, выровнены в колонку */
+      .field-label {
+        display: inline-block;
+        min-width: 170px;
+        color: #4caf50;
+        margin-right: 6px;
+      }
+      .name-input-container input[type="text"] {
+        width: 200px;
+      }
+      .name-input-container,
+      .proportion-container,
+      .target-container,
+      .tracked-inputs-container,
+      .total-inputs-container,
+      .recommendation-display-container,
+      .priority-display-container,
+      .actual-proportion-container,
+      .buttons-container {
+        margin: 6px 0;
+      }
+      /* Операции: кнопка меню справа, выпадающее меню, модальные окна,
+         подсветка сиблингов разбиения */
+      #menuButton {
+        margin-left: auto;
+      }
+      #operationsMenu {
+        position: absolute;
+        top: 100%;
+        right: 10px;
+        background-color: #000000;
+        border: 1px solid #444;
+        display: none;
+        flex-direction: column;
+        z-index: 1200;
+      }
+      #operationsMenu.visible {
+        display: flex;
+      }
+      #operationsMenu button {
+        margin: 4px;
+        text-align: left;
+        white-space: nowrap;
+      }
+      #modalOverlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.75);
+        z-index: 2000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #modalOverlay.hidden {
+        display: none;
+      }
+      #modalBox {
+        background: #111111;
+        border: 1px solid #4caf50;
+        border-radius: 6px;
+        padding: 16px;
+        min-width: 320px;
+        max-width: 90%;
+        max-height: 80vh;
+        overflow: auto;
+      }
+      .modal-title {
+        color: #4caf50;
+        font-weight: bold;
+        margin-bottom: 10px;
+      }
+      .modal-row {
+        margin: 8px 0;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .modal-error {
+        color: #ff6b6b;
+        min-height: 1.2em;
+        margin: 6px 0;
+      }
+      .cloud-status div {
+        margin: 2px 0;
+      }
+      .cloud-action-btn {
+        flex: 1;
+        white-space: nowrap;
+      }
+      #cloudButton.has-error {
+        border-color: #ff6b6b;
+        color: #ff6b6b;
+      }
+      #cloudButton.synced {
+        border-color: #4caf50;
+      }
+      .group-select-item {
+        display: block;
+        margin: 4px 0;
+      }
+      .split-share {
+        color: #4caf50;
+        border: 1px dashed #4caf50;
+        border-radius: 4px;
+        padding: 2px 6px;
+        cursor: help;
+        display: inline-block;
+      }
+      .sibling-highlight {
+        border-color: #4caf50 !important;
+        box-shadow: 0 0 8px #4caf50;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="globalControls">
+      <div id="appTitle">physus</div>
+      <label> Конец: <input type="time" id="globalEndTime" /> </label>
+      <button data-action="add-timer">+ Добавить таймер</button>
+      <button id="awayButton" data-action="toggle-away">Отошёл</button>
+      <button id="saveTimersToLocalStorageManually" data-action="save">
+        Сохранить
+      </button>
+      <button id="exportButton" data-action="export">Экспорт</button>
+      <button id="importButton" data-action="import">Импорт</button>
+      <button
+        id="cloudButton"
+        data-action="cloud"
+        title="Облачная синхронизация (Supabase)"
+      >
+        ☁ Облако
+      </button>
+      <button id="menuButton" data-action="menu" title="Операции со списком задач">
+        ☰ Операции
+      </button>
+      <div id="operationsMenu">
+        <button data-action="create-in-group">Создать задачу внутри группы</button>
+      </div>
+    </div>
+    <div id="timersContainer"></div>
+    <div id="modalOverlay" class="hidden">
+      <div id="modalBox"></div>
+    </div>
+    <script>
+      // ============================================================
+      //  ОБЛАЧНАЯ СИНХРОНИЗАЦИЯ (Supabase) — инструкция в DEPLOY.md.
+      //  Впишите Project URL и anon key ниже. Пока они пустые,
+      //  приложение работает в чисто локальном режиме (как раньше).
+      // ============================================================
+      const CLOUD_CONFIG = {
+        url: "https://iqvqjiwjizlzronudgui.supabase.co",
+        anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
+        syncIntervalMs: 20000, // интервал фоновой синхронизации, мс
+      };
+      class NotificationService {
+        static initializeNotificationSystem() {
+          Notification.requestPermission();
+        }
+        static checkNotificationPermission() {
+          return Notification.permission === "granted";
+        }
+        static showNotification(title, message) {
+          if (this.checkNotificationPermission()) {
+            new Notification(title, {
+              body: message,
+            });
+          }
+        }
+        static notifyTaskCompleted(taskName) {
+          this.showNotification(
+            "Prep Task Completed",
+            `Task "${taskName}" completed`
+          );
+        }
+      }
+      class EventService {
+        static setupEventDelegation() {
+          const timersContainer = AppState.getTimersContainerElement();
+          timersContainer.addEventListener(
+            "click",
+            this.handleTimersContainerClick
+          );
+          timersContainer.addEventListener(
+            "change",
+            this.handleTimersContainerChange
+          );
+          // Автообновление при получении/потере фокуса поля ввода
+          timersContainer.addEventListener(
+            "focusin",
+            this.handleFieldFocusTrigger
+          );
+          timersContainer.addEventListener(
+            "focusout",
+            this.handleFieldFocusTrigger
+          );
+          const globalControls = document.getElementById("globalControls");
+          globalControls.addEventListener(
+            "click",
+            this.handleGlobalControlsClick
+          );
+          globalControls.addEventListener(
+            "focusin",
+            this.handleFieldFocusTrigger
+          );
+          globalControls.addEventListener(
+            "focusout",
+            this.handleFieldFocusTrigger
+          );
+          // Подсветка сиблингов разбиения при наведении на «Долю»
+          timersContainer.addEventListener(
+            "mouseover",
+            this.handleTimersContainerMouseOver
+          );
+          timersContainer.addEventListener(
+            "mouseout",
+            this.handleTimersContainerMouseOut
+          );
+          const globalEndTimeInput = document.getElementById("globalEndTime");
+          globalEndTimeInput.addEventListener(
+            "input",
+            TimerController.handleGlobalEndTimeInput
+          );
+          document
+            .getElementById("modalOverlay")
+            .addEventListener("click", ModalController.handleOverlayClick);
+        }
+        static handleFieldFocusTrigger(event) {
+          // «Дать фокус» / «убрать фокус» с поля — триггер автообновления
+          if (event.target && event.target.tagName === "INPUT") {
+            AppController.autoUpdate();
+          }
+        }
+        static handleTimersContainerClick(event) {
+          return TimerController.handleTimersContainerClick(event);
+        }
+        static handleTimersContainerChange(event) {
+          return TimerController.handleTimersContainerChange(event);
+        }
+        static handleTimersContainerMouseOver(event) {
+          const shareEl =
+            event.target.closest && event.target.closest(".split-share");
+          if (!shareEl) return;
+          EventService.highlightSiblings(
+            shareEl.getAttribute("data-split-id"),
+            true
+          );
+        }
+        static handleTimersContainerMouseOut(event) {
+          const shareEl =
+            event.target.closest && event.target.closest(".split-share");
+          if (!shareEl) return;
+          EventService.highlightSiblings(
+            shareEl.getAttribute("data-split-id"),
+            false
+          );
+        }
+        static highlightSiblings(splitId, on) {
+          // Подсвечивает все карточки, созданные в ОДНОМ разбиении (общий splitId)
+          if (!splitId) return;
+          AppState.getTimers().forEach(t => {
+            if (t.splitId === splitId) {
+              const card = AppState.getTimerElement(t.id);
+              if (card) card.classList.toggle("sibling-highlight", on);
+            }
+          });
+        }
+        static handleGlobalControlsClick(event) {
+          // Автообновление срабатывает при каждом клике ДО целевого действия
+          // (бывшие кнопки «Обновить всё», «Рекомендация»,
+          // «Применить рекомендацию» убраны из интерфейса).
+          AppController.autoUpdate();
+          const target = event.target;
+          if (target.tagName === "BUTTON") {
+            const action = target.getAttribute("data-action");
+            if (action === "add-timer") {
+              AddTaskController.openModal();
+            } else if (action === "menu") {
+              MenuController.toggle();
+            } else if (action === "create-in-group") {
+              MenuController.hide();
+              GroupTaskController.openModal();
+            } else if (action === "toggle-away") {
+              AppController.toggleAway();
+            } else if (action === "save") {
+              AppController.saveTimers();
+            } else if (action === "export") {
+              AppController.exportTimers();
+            } else if (action === "import") {
+              AppController.importTimers();
+            } else if (action === "cloud") {
+              CloudController.openModal();
+            }
+          }
+        }
+      }
+      class SessionManager {
+        static isJustAfterReset = false;
+        static clearJustAfterResetFlag() {
+          this.isJustAfterReset = false;
+        }
+        static checkForSessionReset() {
+          const lastSessionEndTime = AppState.getLastSessionEndTime();
+          if (!lastSessionEndTime) return false;
+          const now = new Date();
+          if (now >= lastSessionEndTime) {
+            AppState.setNeedsReset(true);
+            return true;
+          }
+          return false;
+        }
+        static performSessionReset() {
+          if (!AppState.getNeedsReset()) return;
+          const timers = AppState.getTimers();
+          timers.forEach(timer => {
+            timer.lastSessionDisplayProportion =
+              ProportionCalculator.getActualProportion(timer.id);
+            timer.originalDailyTotalSeconds = timer.dailyTotalSeconds;
+            timer.dailyTotalSeconds = 0;
+            timer.dailyTrackedSeconds = 0;
+            timer.trackedSeconds = 0;
+            timer.lastResetTime = new Date();
+          });
+          this.isJustAfterReset = true;
+          AppState.setNeedsReset(false);
+          // Фикс БАГ #2: сразу сдвигаем границу сессии в будущее, чтобы сброс
+          // выполнялся строго один раз. Раньше, если globalEndTime отсутствовал
+          // (например, терялся после перезагрузки страницы), needsReset
+          // взводился каждый тик и счётчики обнулялись каждые 200 мс.
+          this.advanceSessionEndTime();
+          AppState.notify("sessionReset");
+        }
+        static advanceSessionEndTime() {
+          const last = AppState.getLastSessionEndTime();
+          if (!last) return;
+          const now = new Date();
+          if (now < last) return;
+          const globalEnd = AppState.getGlobalEndTime();
+          if (globalEnd && !isNaN(globalEnd.getTime())) {
+            const next = new Date(globalEnd.getTime());
+            while (next <= now) {
+              next.setDate(next.getDate() + 1);
+            }
+            AppState.setLastSessionEndTime(next);
+          } else {
+            // Время конца не задано — естественная граница сессии: полночь.
+            AppState.setLastSessionEndTime(TimeCalculator.getNextMidnight(now));
+          }
+        }
+        static updateSessionEndTime(globalEndTime) {
+          if (globalEndTime) {
+            AppState.setLastSessionEndTime(new Date(globalEndTime));
+          }
+        }
+        static checkAndPerformReset() {
+          this.checkForSessionReset();
+          this.performSessionReset();
+        }
+      }
+      class AppController {
+        static init() {
+          TimerView.init();
+          StorageService.loadTimersFromLocalStorage();
+          SessionManager.checkForSessionReset();
+          EventService.setupEventDelegation();
+          this.setupIntervalUpdates();
+          this.setupEventSubscriptions();
+        }
+        static setupIntervalUpdates() {
+          setInterval(() => CalculationService.updateCalculations(), 200);
+          setInterval(() => StorageService.saveTimersToLocalStorage(), 60000);
+        }
+        static setupEventSubscriptions() {
+          AppState.subscribe("timerRemoved", timer => {
+            if (AppState.getGlobalEndTime()) {
+              TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+            }
+            CalculationService.updateCalculations();
+          });
+          AppState.subscribe("timerPlansUpdated", timers => {
+            timers.forEach(t => {
+              TimerView.updateTimerPlannedTime(t);
+              TimerView.updateTimerRemainingTime(t);
+            });
+          });
+        }
+        static addNewTimer(name = "", share = null) {
+          SessionManager.clearJustAfterResetFlag();
+          const timers = AppState.getTimers();
+          if (timers.length === 0 || share === null) {
+            // Первая задача (или служебное добавление) — обычное создание
+            const newTimer = TimerModel.createTimer();
+            newTimer.name = name || "";
+            AppState.addTimer(newTimer);
+            if (AppState.getGlobalEndTime()) {
+              TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+            }
+            CalculationService.updateCalculations();
+            return newTimer;
+          }
+          // «Добавить ко всем» — механика add_task_to_group из py-скрипта,
+          // где группа = все задачи
+          return this.createTaskInGroup(
+            timers.map(t => t.id),
+            name,
+            share
+          );
+        }
+        static createTaskInGroup(groupIds, name, share) {
+          // «Создать задачу внутри группы» (механика py-скрипта):
+          //  - существующие задачи группы ужимаются в (1 - p), сохраняя
+          //    относительные доли веса и цели; их время НЕ меняется;
+          //  - новая задача получает долю p внутри группы (вес P*p, цель T*p)
+          //    и «виртуальную историю» p*G/(1-p), чтобы её фактическая доля
+          //    сразу равнялась целевой и рекомендации не перекашивались.
+          SessionManager.clearJustAfterResetFlag();
+          const group = AppState.getTimers().filter(t =>
+            groupIds.includes(t.id)
+          );
+          if (!group.length) return null;
+          let p = Number(share);
+          if (!Number.isFinite(p) || p < 0) p = 0;
+          if (p >= 1) p = 1 - 1e-9;
+          const groupProportion = group.reduce(
+            (sum, t) => sum + (t.proportion || 0),
+            0
+          );
+          const groupTarget = group.reduce(
+            (sum, t) => sum + (t.targetProportion || 0),
+            0
+          );
+          const groupTime = group.reduce(
+            (sum, t) => sum + (t.totalSeconds || 0),
+            0
+          );
+          group.forEach(t => {
+            t.proportion = (t.proportion || 0) * (1 - p);
+            t.targetProportion = (t.targetProportion || 0) * (1 - p);
+            TimerView.syncProportionInputs(t);
+          });
+          const newTimer = TimerModel.createTimer();
+          newTimer.name = name || "";
+          newTimer.proportion = groupProportion * p;
+          newTimer.targetProportion = groupTarget * p;
+          const virtualTime = (p * groupTime) / (1 - p);
+          newTimer.totalSeconds = virtualTime;
+          newTimer.dailyTotalSeconds = virtualTime;
+          newTimer.originalDailyTotalSeconds = virtualTime;
+          newTimer.lifetimeTotalSeconds = virtualTime;
+          newTimer.recommendedProportion = 0;
+          AppState.addTimer(newTimer);
+          if (AppState.getGlobalEndTime()) {
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          }
+          CalculationService.updateCalculations();
+          this.autoUpdate();
+          return newTimer;
+        }
+        static splitTimer(timerId, specs) {
+          // «Разбить задачу на подзадачи» (механика py-скрипта split_task,
+          // исправленная: ВСЕ счётчики времени делятся пропорционально долям,
+          // а не копируются целиком; счётчики трекинга сбрасываются).
+          SessionManager.clearJustAfterResetFlag();
+          const timers = AppState.getTimers();
+          const index = timers.findIndex(t => t.id === timerId);
+          if (index === -1) return null;
+          const parent = timers[index];
+          const totalShare = specs.reduce((sum, x) => sum + x.share, 0);
+          if (!(totalShare > 0)) return null;
+          const splitId = `split-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+          const children = specs.map(spec => {
+            const share = spec.share / totalShare; // нормализация к сумме 1
+            const child = {
+              ...parent,
+              id: Utils.generateId(),
+              name: spec.name,
+              proportion: (parent.proportion || 0) * share,
+              targetProportion: (parent.targetProportion || 0) * share,
+              recommendedProportion: 0,
+              trackedSeconds: (parent.trackedSeconds || 0) * share,
+              totalTrackedSeconds: (parent.totalTrackedSeconds || 0) * share,
+              totalDuration: (parent.totalDuration || 0) * share,
+              dailyTrackedSeconds: (parent.dailyTrackedSeconds || 0) * share,
+              totalSeconds: (parent.totalSeconds || 0) * share,
+              dailyTotalSeconds: (parent.dailyTotalSeconds || 0) * share,
+              originalDailyTotalSeconds:
+                (parent.originalDailyTotalSeconds || 0) * share,
+              lifetimeTotalSeconds: (parent.lifetimeTotalSeconds || 0) * share,
+              plannedSeconds: 0,
+              baseAllocation: 0,
+              remainingSeconds: 0,
+              isTracking: false,
+              startTime: null,
+              lastResetTime: new Date(),
+              shouldUpdateProportion: false,
+              splitShare: share,
+              splitId: splitId,
+              splitParentName: parent.name || "",
+            };
+            delete child.lastSessionDisplayProportion;
+            return child;
+          });
+          const newTimers = timers
+            .slice(0, index)
+            .concat(children, timers.slice(index + 1));
+          AppState.setTimers(newTimers);
+          AppState.notify("timerRemoved", parent); // убрать карточку родителя
+          children.forEach(child => TimerView.addTimerElement(child));
+          if (AppState.getGlobalEndTime()) {
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          }
+          CalculationService.updateCalculations();
+          this.autoUpdate();
+          return children;
+        }
+        static toggleTracking(id) {
+          TimerController.toggleTracking(id);
+        }
+        static resetTimer(timer) {
+          TimerController.resetTimer(timer);
+        }
+        static deleteTimer(timer) {
+          TimerController.deleteTimer(timer);
+        }
+        static updateTimer(timer) {
+          TimerController.updateTimer(timer);
+        }
+        static toggleAway() {
+          TimeManager.toggleAway();
+        }
+        static calculateRecommendations() {
+          SessionManager.checkAndPerformReset();
+          CalculationService.calculateRecommendedProportions(
+            AppState.getTimers(),
+            CalculationService.getTotalTime()
+          );
+          CalculationService.calculatePriority(AppState.getTimers());
+        }
+        static applyRecommendations() {
+          // Бывшая «Применить рекомендацию», но чтение из модели, а не из
+          // текста DOM: рекомендованные пропорции становятся текущими весами,
+          // затем планы и рекомендации пересчитываются от новых весов.
+          SessionManager.clearJustAfterResetFlag();
+          const timers = AppState.getTimers();
+          timers.forEach(timer => {
+            const rec = Number(timer.recommendedProportion);
+            if (Number.isFinite(rec) && rec >= 0) {
+              timer.proportion = rec;
+              const input = AppState.getTimerProportionElement(timer.id);
+              if (input) {
+                input.value = String(rec);
+              }
+            }
+          });
+          TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          CalculationService.calculateRecommendedProportions(
+            timers,
+            CalculationService.getTotalTime()
+          );
+          CalculationService.calculatePriority(timers);
+          AppState.notify("displayNeedsUpdate");
+        }
+        static updateAllTimers() {
+          // Бывшее «Обновить всё»: планы всех таймеров + рекомендации + приоритеты
+          TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          AppController.calculateRecommendations();
+        }
+        static autoUpdate() {
+          // Единая точка автообновления. Триггеры:
+          //  - любой пользовательский клик (до целевого действия);
+          //  - получение/потеря фокуса поля ввода;
+          //  - наступление «Конца» (ролловер сессии).
+          SessionManager.checkAndPerformReset();
+          if (AppState.isAwayModeActive()) {
+            // В режиме «Отошёл» распределение заморожено: планы уменьшает
+            // handleAwayMode, а пересчёт от настенного времени стёр бы
+            // эти вычитания.
+            return;
+          }
+          this.updateAllTimers();
+          this.applyRecommendations();
+        }
+        static saveTimers() {
+          StorageService.saveTimersToLocalStorage();
+          // Ручное «Сохранить» сразу отправляет состояние в облако
+          CloudSync.pushNow(true);
+        }
+        static exportTimers() {
+          StorageService.exportTimersToFile();
+        }
+        static importTimers() {
+          StorageService.importTimersFromFile();
+        }
+      }
+      function initializeOnLoad() {
+        AppController.init();
+      }
+      // Запуск: сначала приложение стартует на локальном состоянии,
+      // затем подключается облако — если облачная запись отличается,
+      // она применяется и страница перезагружается.
+      window.onload = async () => {
+        initializeOnLoad();
+        CloudSync.startPeriodic();
+        await CloudSync.boot();
+      };
+      NotificationService.initializeNotificationSystem();
+      const AppState = {
+        timers: [],
+        globalEndTime: null,
+        initialAvailable: 0,
+        lastUpdateTime: new Date(),
+        awayModeActive: false,
+        autoAwayModeActive: false,
+        awayStartTime: null,
+        lastSessionEndTime: null,
+        needsReset: false,
+        observers: {},
+        getTimers() {
+          return this.timers;
+        },
+        setTimers(newTimers) {
+          this.timers = newTimers;
+          this.notify("timersChanged", this.timers);
+        },
+        getGlobalEndTime() {
+          return this.globalEndTime;
+        },
+        setGlobalEndTime(newEndTime) {
+          this.globalEndTime = newEndTime;
+          this.notify("globalEndTimeChanged", this.globalEndTime);
+        },
+        getInitialAvailable() {
+          return this.initialAvailable;
+        },
+        setInitialAvailable(value) {
+          this.initialAvailable = value;
+          this.notify("initialAvailableChanged", this.initialAvailable);
+        },
+        getLastUpdateTime() {
+          return this.lastUpdateTime;
+        },
+        setLastUpdateTime(time) {
+          this.lastUpdateTime = time;
+          this.notify("lastUpdateTimeChanged", this.lastUpdateTime);
+        },
+        isAwayModeActive() {
+          return this.awayModeActive;
+        },
+        setAwayModeActive(active) {
+          this.awayModeActive = active;
+          this.notify("awayModeChanged", this.awayModeActive);
+        },
+        isAutoAwayModeActive() {
+          return this.autoAwayModeActive;
+        },
+        setAutoAwayModeActive(active) {
+          this.autoAwayModeActive = active;
+          this.notify("autoAwayModeChanged", this.autoAwayModeActive);
+        },
+        getAwayStartTime() {
+          return this.awayStartTime;
+        },
+        setAwayStartTime(time) {
+          this.awayStartTime = time;
+          this.notify("awayStartTimeChanged", this.awayStartTime);
+        },
+        getLastSessionEndTime() {
+          return this.lastSessionEndTime;
+        },
+        setLastSessionEndTime(time) {
+          this.lastSessionEndTime = time;
+          this.notify("lastSessionEndTimeChanged", this.lastSessionEndTime);
+        },
+        getNeedsReset() {
+          return this.needsReset;
+        },
+        setNeedsReset(value) {
+          this.needsReset = value;
+          this.notify("needsResetChanged", this.needsReset);
+        },
+        getGlobalEndTimeFromUI() {
+          return document.getElementById("globalEndTime").value;
+        },
+        getGlobalEndTimeElement() {
+          return document.getElementById("globalEndTime");
+        },
+        getTimerElement(timerId) {
+          return document.getElementById(`timer-${timerId}`);
+        },
+        getTimerPlannedElement(timerId) {
+          return document.getElementById(`planned-${timerId}`);
+        },
+        getTimerTrackedElement(timerId) {
+          return document.getElementById(`tracked-${timerId}`);
+        },
+        getTimerTotalElement(timerId) {
+          return document.getElementById(`total-${timerId}`);
+        },
+        getTimerRemainingElement(timerId) {
+          return document.getElementById(`remaining-${timerId}`);
+        },
+        getTimerRecommendationElement(timerId) {
+          return document.getElementById(`recommendation-${timerId}`);
+        },
+        getTimerPriorityElement(timerId) {
+          return document.getElementById(`priority-${timerId}`);
+        },
+        getTimerProportionElement(timerId) {
+          return document.getElementById(`proportion-${timerId}`);
+        },
+        getTimerTargetProportionElement(timerId) {
+          return document.getElementById(`target-proportion-${timerId}`);
+        },
+        getAwayButtonElement() {
+          return document.getElementById("awayButton");
+        },
+        getTimersContainerElement() {
+          return document.getElementById("timersContainer");
+        },
+        addTimer(timer) {
+          this.timers.push(timer);
+          this.notify("timerAdded", timer);
+          return timer;
+        },
+        findTimerById(id) {
+          const numericId = typeof id === "string" ? parseFloat(id) : id;
+          return this.timers.find(t => t.id === numericId);
+        },
+        removeTimer(id) {
+          const timer = this.findTimerById(id);
+          const numericId = typeof id === "string" ? parseFloat(id) : id;
+          this.timers = this.timers.filter(t => t.id !== numericId);
+          this.notify("timerRemoved", timer);
+        },
+        updateTimer(timer) {
+          const index = this.timers.findIndex(t => t.id === timer.id);
+          if (index !== -1) {
+            this.timers[index] = timer;
+            this.notify("timerUpdated", timer);
+          }
+        },
+        calculateTotalDuration() {
+          return this.timers.reduce(
+            (sum, t) =>
+              sum +
+              Math.max(t.originalDailyTotalSeconds || 0, t.dailyTotalSeconds),
+            0
+          );
+        },
+        saveToLocalStorage() {
+          StorageService.saveToLocalStorage();
+        },
+        loadFromLocalStorage() {
+          return StorageService.loadFromLocalStorage();
+        },
+        subscribe(event, callback) {
+          if (!this.observers[event]) {
+            this.observers[event] = [];
+          }
+          this.observers[event].push(callback);
+        },
+        unsubscribe(event, callback) {
+          if (this.observers[event]) {
+            this.observers[event] = this.observers[event].filter(
+              cb => cb !== callback
+            );
+          }
+        },
+        notify(event, data) {
+          if (this.observers[event]) {
+            this.observers[event].forEach(callback => callback(data));
+          }
+        },
+      };
+      class StorageService {
+        static saveTimersToLocalStorage() {
+          const timers = AppState.getTimers();
+          this.saveToLocalStorage();
+        }
+        static loadTimersFromLocalStorage() {
+          if (!this.loadFromLocalStorage()) {
+            return;
+          }
+          AppState.getTimers().forEach(timer => {
+            TimerView.addTimerElement(timer);
+            const targetProportionInput =
+              AppState.getTimerTargetProportionElement(timer.id);
+            if (targetProportionInput) {
+              targetProportionInput.value = timer.targetProportion;
+            }
+          });
+        }
+        static saveToLocalStorage() {
+          const timers = AppState.getTimers();
+          const timersData = timers.map(timer => ({
+            ...timer,
+            totalTrackedSeconds: timer.totalTrackedSeconds || 0,
+            startTime: timer.startTime ? timer.startTime.getTime() : null,
+            trackedSeconds: timer.trackedSeconds,
+            totalDuration: timer.totalDuration,
+            targetProportion: timer.targetProportion,
+            dailyTotalSeconds: timer.dailyTotalSeconds || 0,
+            lifetimeTotalSeconds: timer.lifetimeTotalSeconds || 0,
+            lastResetTime: timer.lastResetTime
+              ? timer.lastResetTime.getTime()
+              : null,
+            lastSessionDisplayProportion: timer.lastSessionDisplayProportion,
+          }));
+          const timersJSON = JSON.stringify(timersData);
+          this.setItemToLocalStorage("timers", timersJSON);
+          // Фикс БАГ #2: сохраняем также время "Конца". Раньше оно терялось
+          // при перезагрузке, а lastSessionEndTime оставался — из-за этого
+          // после перезагрузки за границей сессии начинался бесконечный сброс.
+          this.setItemToLocalStorage(
+            "globalEndTimeValue",
+            AppState.getGlobalEndTimeFromUI() || ""
+          );
+          const wasTimerActive = timers.some(timer => timer.isTracking);
+          this.setItemToLocalStorage(
+            "wasTimerActive",
+            wasTimerActive ? "true" : "false"
+          );
+          const lastSessionEndTime = AppState.getLastSessionEndTime();
+          // Фикс БАГ #10: при отсутствии границы пишем "" (setItem(key, null)
+          // сохранял строку "null", которая при загрузке давала Invalid Date).
+          this.setItemToLocalStorage(
+            "lastSessionEndTime",
+            lastSessionEndTime ? lastSessionEndTime.getTime().toString() : ""
+          );
+          // Облако: локальное состояние обновилось — pushNow отправит
+          // его, только если содержимое действительно изменилось.
+          CloudSync.onLocalSaved();
+        }
+        static parseTimersJSON(timersJSON) {
+          // Фикс БАГ #8: сохранённые/импортированные данные могут быть
+          // повреждены. Любые проблемы разбираются здесь и не должны прерывать
+          // AppController.init — иначе приложение оставалось «мёртвым»:
+          // обработчики событий и циклы пересчёта не подключались.
+          let parsed;
+          try {
+            parsed = JSON.parse(timersJSON);
+          } catch (error) {
+            console.error(
+              "Сохранённые таймеры повреждены (JSON):",
+              error && error.message
+            );
+            return [];
+          }
+          if (!Array.isArray(parsed)) {
+            console.error("Сохранённые таймеры — не массив, игнорируем");
+            return [];
+          }
+          const result = [];
+          parsed.forEach(raw => {
+            const timer = StorageService.sanitizeTimerEntry(raw);
+            if (timer) {
+              result.push(timer);
+            }
+          });
+          return result;
+        }
+        static storageDateOrNull(value) {
+          if (value === null || value === undefined || value === "") {
+            return null;
+          }
+          const asNumber = Number(value);
+          if (Number.isFinite(asNumber)) {
+            return new Date(asNumber);
+          }
+          if (typeof value === "string") {
+            const parsed = new Date(value);
+            if (!isNaN(parsed.getTime())) {
+              return parsed;
+            }
+          }
+          return null;
+        }
+        static sanitizeTimerEntry(raw) {
+          // Фикс БАГ #9: не-объекты и записи без валидного числового id
+          // отбрасываются; отсутствующие/битые поля получают дефолты из
+          // createTimer; числа приводятся через Number() (строка "600"
+          // становится 600, а не источником конкатенации при сложении).
+          if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+            return null;
+          }
+          const id = Number(raw.id);
+          if (!Number.isFinite(id)) {
+            return null;
+          }
+          const base = TimerModel.createTimer();
+          const num = (value, fallback) => {
+            if (value === null || value === undefined || value === "") {
+              return fallback;
+            }
+            const n = Number(value);
+            return Number.isFinite(n) ? n : fallback;
+          };
+          const timer = { ...base, ...raw };
+          timer.id = id;
+          timer.name = typeof raw.name === "string" ? raw.name : "";
+          timer.proportion = num(raw.proportion, base.proportion);
+          timer.targetProportion = num(raw.targetProportion, base.targetProportion);
+          timer.recommendedProportion = num(
+            raw.recommendedProportion,
+            base.recommendedProportion
+          );
+          timer.trackedSeconds = num(raw.trackedSeconds, 0);
+          timer.plannedSeconds = num(raw.plannedSeconds, 0);
+          timer.baseAllocation = num(raw.baseAllocation, 0);
+          timer.remainingSeconds = num(raw.remainingSeconds, 0);
+          timer.totalDuration = num(raw.totalDuration, 0);
+          timer.totalSeconds = num(raw.totalSeconds, 0);
+          timer.dailyTrackedSeconds = num(raw.dailyTrackedSeconds, 0);
+          timer.dailyTotalSeconds = num(raw.dailyTotalSeconds, 0);
+          timer.originalDailyTotalSeconds = num(
+            raw.originalDailyTotalSeconds,
+            timer.dailyTotalSeconds
+          );
+          timer.lifetimeTotalSeconds = num(
+            raw.lifetimeTotalSeconds,
+            timer.totalSeconds
+          );
+          timer.totalTrackedSeconds = num(raw.totalTrackedSeconds, 0);
+          const lsd = raw.lastSessionDisplayProportion;
+          timer.lastSessionDisplayProportion =
+            lsd === null || lsd === undefined || lsd === "" ||
+            !Number.isFinite(Number(lsd))
+              ? undefined
+              : Number(lsd);
+          timer.isTracking = raw.isTracking === true;
+          timer.startTime = this.storageDateOrNull(raw.startTime);
+          const resetDate = this.storageDateOrNull(raw.lastResetTime);
+          timer.lastResetTime = resetDate ? resetDate : new Date();
+          return timer;
+        }
+        static loadFromLocalStorage() {
+          const timersJSON = this.getItemFromLocalStorage("timers");
+          if (!timersJSON) {
+            return false;
+          }
+          // Фикс БАГ #8/#9: устойчивый разбор — битый JSON больше не убивает
+          // инициализацию, а неполные/мусорные записи не загрязняют модель.
+          const loadedTimers = this.parseTimersJSON(timersJSON);
+          AppState.setTimers(loadedTimers);
+          const wasTimerActive = this.getItemFromLocalStorage("wasTimerActive");
+          if (wasTimerActive === "true") {
+            AppState.getTimers().forEach(timer => {
+              timer.isTracking = false;
+            });
+          }
+          const lastSessionEndTimeStr =
+            this.getItemFromLocalStorage("lastSessionEndTime");
+          if (lastSessionEndTimeStr) {
+            // Фикс БАГ #10: "abc"/"null" и прочий мусор не должны превращаться
+            // в Invalid Date (с ним `now >= граница` всегда false — дневной
+            // сброс сессии молча переставал работать).
+            const parsedMs = Number(lastSessionEndTimeStr);
+            if (Number.isFinite(parsedMs)) {
+              const parsedDate = new Date(parsedMs);
+              if (!isNaN(parsedDate.getTime())) {
+                AppState.setLastSessionEndTime(parsedDate);
+              }
+            }
+          }
+          // Фикс БАГ #2: восстанавливаем время "Конца" (поле ввода + состояние
+          // + свежие планы). lastSessionEndTime здесь НЕ перезаписываем: если
+          // сохранённая граница уже в прошлом, SessionManager выполнит ровно
+          // один сброс и сам сдвинет границу (advanceSessionEndTime).
+          this.restoreGlobalEndTime();
+          return true;
+        }
+        static restoreGlobalEndTime() {
+          const savedEndValue =
+            this.getItemFromLocalStorage("globalEndTimeValue");
+          if (!savedEndValue) return;
+          const endTimeElement = AppState.getGlobalEndTimeElement();
+          if (endTimeElement) {
+            endTimeElement.value = savedEndValue;
+          }
+          const parsed = TimeCalculator.parseGlobalEndTime(savedEndValue);
+          if (!parsed) return;
+          const [hours, minutes] = parsed;
+          const { newGlobalEndTime } = TimeCalculator.createNewGlobalEndTime(
+            hours,
+            minutes
+          );
+          AppState.setGlobalEndTime(newGlobalEndTime);
+          // Фикс БАГ #10a: если граница сессии не сохранена или повреждена,
+          // выводим её из времени «Конца» (предыдущее вхождение = следующие
+          // вхождение минус сутки). Если она уже позади, SessionManager
+          // выполнит ровно один сброс зависшей сессии и сдвинет границу.
+          const currentSessionEnd = AppState.getLastSessionEndTime();
+          if (!currentSessionEnd || isNaN(currentSessionEnd.getTime())) {
+            const derived = new Date(newGlobalEndTime.getTime());
+            derived.setDate(derived.getDate() - 1);
+            AppState.setLastSessionEndTime(derived);
+          }
+          const now = new Date();
+          const remaining = CalculationService.calculateRemainingTime(
+            newGlobalEndTime,
+            now
+          );
+          AppState.setInitialAvailable(remaining);
+          const timers = AppState.getTimers();
+          const totalWeight = CalculationService.calculateTotalWeight(timers);
+          CalculationService.updateTimerPlans(timers, remaining, null, totalWeight);
+        }
+        static exportTimersToFile() {
+          const timers = AppState.getTimers();
+          const timersData = timers.map(timer => ({
+            ...timer,
+            totalTrackedSeconds: timer.totalTrackedSeconds || 0,
+            startTime: timer.startTime ? timer.startTime.getTime() : null,
+            trackedSeconds: timer.trackedSeconds,
+            totalDuration: timer.totalDuration,
+            targetProportion: timer.targetProportion,
+            dailyTotalSeconds: timer.dailyTotalSeconds || 0,
+            originalDailyTotalSeconds: timer.originalDailyTotalSeconds || 0,
+            lifetimeTotalSeconds: timer.lifetimeTotalSeconds || 0,
+            lastResetTime: timer.lastResetTime
+              ? timer.lastResetTime.getTime()
+              : null,
+          }));
+          const timersJSON = JSON.stringify(timersData, null, 2);
+          const now = new Date();
+          const dateStr = now
+            .toISOString()
+            .replace(/[:.]/g, "-")
+            .replace("T", "_")
+            .split("Z")[0];
+          const fileName = `PropTimerz_${dateStr}.json`;
+          const blob = new Blob([timersJSON], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+        static importTimersFromFile() {
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = ".json";
+          input.onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = event => {
+              try {
+                const timersJSON = event.target.result;
+                // Фикс БАГ #8/#9: импорт проходит через тот же санитайзер,
+                // что и загрузка из localStorage.
+                const loadedTimers =
+                  StorageService.parseTimersJSON(timersJSON);
+                const timersContainer = AppState.getTimersContainerElement();
+                timersContainer.innerHTML = "";
+                AppState.setTimers(loadedTimers);
+                AppState.getTimers().forEach(timer => {
+                  TimerView.addTimerElement(timer);
+                  const targetProportionInput =
+                    AppState.getTimerTargetProportionElement(timer.id);
+                  if (targetProportionInput) {
+                    targetProportionInput.value = timer.targetProportion;
+                  }
+                  timer.isTracking = false;
+                });
+                this.saveToLocalStorage();
+                CalculationService.updateCalculations();
+              } catch (error) {
+                alert("Ошибка при импорте файла: " + error.message);
+              }
+            };
+            reader.readAsText(file);
+          };
+          input.click();
+        }
+        static setItemToLocalStorage(key, value) {
+          try {
+            localStorage.setItem(key, value);
+          } catch (error) {
+            // Фикс БАГ #11: хранилище может быть недоступно (исчерпана квота,
+            // приватный режим). Отказ записи не должен ронять приложение
+            // или 60-секундный интервал автосохранения.
+            console.error(
+              "Не удалось сохранить в localStorage:",
+              error && error.message
+            );
+          }
+        }
+        static getItemFromLocalStorage(key) {
+          try {
+            return localStorage.getItem(key);
+          } catch (error) {
+            console.error(
+              "Не удалось прочитать из localStorage:",
+              error && error.message
+            );
+            return null;
+          }
+        }
+      }
+      class TimerController {
+        static handleTimersContainerClick(event) {
+          // Автообновление срабатывает при каждом клике ДО целевого действия
+          AppController.autoUpdate();
+          const target = event.target;
+          if (target.tagName === "BUTTON") {
+            const timerId = Utils.getTimerIdFromElement(target);
+            if (timerId) {
+              const action = target.getAttribute("data-action");
+              if (action === "track") {
+                this.toggleTracking(timerId);
+              } else if (action === "reset") {
+                const timer = AppState.findTimerById(timerId);
+                if (timer) this.resetTimer(timer);
+              } else if (action === "delete") {
+                const timer = AppState.findTimerById(timerId);
+                if (timer) this.deleteTimer(timer);
+              } else if (action === "update") {
+                const timer = AppState.findTimerById(timerId);
+                if (timer) this.updateTimer(timer);
+              } else if (action === "split") {
+                SplitController.openModal(timerId);
+              } else if (action === "apply-tracked") {
+                this.handleTrackedApplyButtonClick(timerId);
+              } else if (action === "apply-total") {
+                this.handleTotalApplyButtonClick(timerId);
+              }
+            }
+          }
+        }
+        static handleTimersContainerChange(event) {
+          const target = event.target;
+          const timerId = Utils.getTimerIdFromElement(target);
+          if (timerId) {
+            if (target.tagName === "INPUT") {
+              const action = target.getAttribute("data-action");
+              if (action === "name") {
+                this.handleNameChange(target, timerId);
+              } else if (action === "proportion") {
+                this.handleProportionChange(target, timerId);
+              } else if (action === "target-proportion") {
+                this.handleTargetProportionChange(target, timerId);
+              }
+            }
+          }
+        }
+        static handleNameChange(input, timerId) {
+          const timer = AppState.findTimerById(timerId);
+          if (timer) {
+            TimerModel.setName(timer, input.value);
+          }
+        }
+        static handleProportionChange(input, timerId) {
+          this.updateDenominator(timerId, input.value);
+        }
+        static handleTargetProportionChange(input, timerId) {
+          SessionManager.clearJustAfterResetFlag();
+          const timer = AppState.findTimerById(timerId);
+          if (timer) {
+            TimerModel.setTargetProportion(timer, input.value);
+            AppController.calculateRecommendations();
+          }
+        }
+        static handleTrackedApplyButtonClick(timerId) {
+          SessionManager.checkAndPerformReset();
+          SessionManager.clearJustAfterResetFlag();
+          const timer = AppState.findTimerById(timerId);
+          if (timer) {
+            const timerContainer = AppState.getTimerElement(timerId);
+            const hoursInput = timerContainer.querySelector(
+              'input[data-type="tracked-hours"]'
+            );
+            const minutesInput = timerContainer.querySelector(
+              'input[data-type="tracked-minutes"]'
+            );
+            const secondsInput = timerContainer.querySelector(
+              'input[data-type="tracked-seconds"]'
+            );
+            if (hoursInput && minutesInput && secondsInput) {
+              this.updateTimerValue(
+                timer,
+                "trackedSeconds",
+                hoursInput,
+                minutesInput,
+                secondsInput,
+                "tracked"
+              );
+              this.updateTimerAfterApply();
+            }
+          }
+        }
+        static handleTotalApplyButtonClick(timerId) {
+          SessionManager.checkAndPerformReset();
+          SessionManager.clearJustAfterResetFlag();
+          const timer = AppState.findTimerById(timerId);
+          if (timer) {
+            const timerContainer = AppState.getTimerElement(timerId);
+            const hoursInput = timerContainer.querySelector(
+              'input[data-type="total-hours"]'
+            );
+            const minutesInput = timerContainer.querySelector(
+              'input[data-type="total-minutes"]'
+            );
+            const secondsInput = timerContainer.querySelector(
+              'input[data-type="total-seconds"]'
+            );
+            if (hoursInput && minutesInput && secondsInput) {
+              const seconds = Utils.convertTimeInputsToSeconds(
+                hoursInput,
+                minutesInput,
+                secondsInput
+              );
+              TimerModel.setTimerValue(timer, "totalSeconds", seconds);
+              TimerModel.setTimerValue(timer, "dailyTotalSeconds", seconds);
+              TimerModel.setTimerValue(timer, "lifetimeTotalSeconds", seconds);
+              TimerModel.setTimerValue(
+                timer,
+                "originalDailyTotalSeconds",
+                seconds
+              );
+              TimerModel.setTimerValue(timer, "totalTrackedSeconds", 0);
+              AppState.setLastUpdateTime(new Date());
+              this.updateTimerAfterApply();
+            }
+          }
+        }
+        static toggleTracking(id) {
+          SessionManager.checkAndPerformReset();
+          SessionManager.clearJustAfterResetFlag();
+          const timers = AppState.getTimers();
+          const timer = timers.find(t => t.id === id);
+          if (!timer) return;
+          if (timer.isTracking) {
+            const now = new Date();
+            const delta = (now - AppState.getLastUpdateTime()) / 1000;
+            AppState.setLastUpdateTime(now);
+            this.stopTracking(timer);
+            CalculationService.updateCalculations();
+          } else {
+            if (AppState.isAwayModeActive()) {
+              AppState.setAwayModeActive(false);
+            }
+            this.stopAllOtherTimers(timers, id);
+            this.startTracking(timer);
+            AppState.notify("displayNeedsUpdate");
+          }
+        }
+        static stopTracking(timer) {
+          TimerModel.stopTracking(timer);
+          AppState.notify("timerStateChanged", timer);
+        }
+        static stopAllOtherTimers(timers, currentTimerId) {
+          CalculationService.updateCalculations();
+          timers.forEach(t => {
+            if (t.id !== currentTimerId && t.isTracking) {
+              TimerModel.stopTracking(t);
+              AppState.notify("timerStateChanged", t);
+            }
+          });
+        }
+        static startTracking(timer) {
+          TimerModel.startTracking(timer);
+          AppState.notify("timerStateChanged", timer);
+        }
+        static handleGlobalEndTimeInput(e) {
+          TimeManager.updateGlobalEndTimeAndPlans(e.target.value, null, true);
+        }
+        static updateDenominator(id, proportion) {
+          SessionManager.checkAndPerformReset();
+          SessionManager.clearJustAfterResetFlag();
+          const timer = AppState.getTimers().find(t => t.id === id);
+          if (timer) {
+            TimerModel.setProportion(timer, proportion);
+            // Фикс БАГ #7: раньше здесь выбирался "первый числовой инпут
+            // карточки" — им оказывалось поле «Целевая пропорция», и оно
+            // визуально перезаписывалось значением пропорции (модель при этом
+            // не менялась — UI расходился с данными). Берём поле по его id.
+            const input = AppState.getTimerProportionElement(id);
+            if (input) input.value = timer.proportion;
+            if (AppState.getGlobalEndTime()) {
+              TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+            }
+            CalculationService.updateCalculations();
+          }
+        }
+        static resetTimer(timer) {
+          SessionManager.clearJustAfterResetFlag();
+          TimerModel.resetTimer(timer);
+          AppState.notify("timerUpdated", timer);
+          AppState.notify("displayNeedsUpdate");
+        }
+        static deleteTimer(timer) {
+          SessionManager.clearJustAfterResetFlag();
+          AppState.removeTimer(timer.id);
+          // Семантика из py-скрипта (remove_tasks): веса и цели оставшихся
+          // задач ренормализуются к сумме 1. Время НЕ перераспределяется.
+          const timers = AppState.getTimers();
+          const sumProp = timers.reduce((sum, t) => sum + (t.proportion || 0), 0);
+          const sumTarget = timers.reduce(
+            (sum, t) => sum + (t.targetProportion || 0),
+            0
+          );
+          timers.forEach(t => {
+            if (sumProp > 0) t.proportion = (t.proportion || 0) / sumProp;
+            if (sumTarget > 0) {
+              t.targetProportion = (t.targetProportion || 0) / sumTarget;
+            }
+            TimerView.syncProportionInputs(t);
+          });
+          if (AppState.getGlobalEndTime()) {
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          }
+          CalculationService.updateCalculations();
+          AppController.autoUpdate();
+        }
+        static updateTimer(timer) {
+          if (AppState.getGlobalEndTime()) {
+            TimeManager.updateGlobalEndTimeAndPlans(null, timer.id, false);
+          } else {
+            AppState.notify("timerUpdated", timer);
+          }
+          CalculationService.updateCalculations();
+          AppController.calculateRecommendations();
+        }
+        static updateTimerValue(
+          timer,
+          propertyName,
+          hoursInput,
+          minutesInput,
+          secondsInput,
+          displayId
+        ) {
+          const seconds = Utils.convertTimeInputsToSeconds(
+            hoursInput,
+            minutesInput,
+            secondsInput
+          );
+          if (propertyName === "trackedSeconds") {
+            // Фикс: ручной ввод «Факта» эквивалентен отслеживанию этого
+            // времени — разница с прежним значением распределяется по всем
+            // дневным/накопительным счётчикам. Раньше менялся только
+            // trackedSeconds, и введённое время не попадало в «Всего»,
+            // «Фактическую пропорцию», рекомендации и приоритеты.
+            const delta = seconds - (Number(timer.trackedSeconds) || 0);
+            if (delta !== 0) {
+              TimerModel.updateTrackedTime(timer, delta);
+            } else {
+              timer.trackedSeconds = seconds;
+            }
+          } else {
+            TimerModel.setTimerValue(timer, propertyName, seconds);
+          }
+          AppState.notify("timerUpdated", timer);
+        }
+        static updateTimerAfterApply() {
+          TimerView.updateAllTimerProportions();
+          CalculationService.updateCalculations();
+          AppController.calculateRecommendations();
+          AppState.notify("displayNeedsUpdate");
+        }
+      }
+      class TimerModel {
+        static createTimer() {
+          return {
+            id: Utils.generateId(),
+            name: "",
+            proportion: 1,
+            targetProportion: 1,
+            recommendedProportion: 1,
+            trackedSeconds: 0,
+            isTracking: false,
+            startTime: null,
+            plannedSeconds: 0,
+            baseAllocation: 0,
+            totalDuration: 0,
+            dailyTrackedSeconds: 0,
+            remainingSeconds: 0,
+            totalSeconds: 0,
+            dailyTotalSeconds: 0,
+            originalDailyTotalSeconds: 0,
+            lifetimeTotalSeconds: 0,
+            lastResetTime: new Date(),
+            shouldUpdateProportion: false,
+            totalTrackedSeconds: 0,
+          };
+        }
+        static setName(timer, name) {
+          timer.name = name;
+        }
+        static setProportion(timer, proportion) {
+          timer.proportion = Utils.parseTimeInput(proportion);
+        }
+        static setTargetProportion(timer, targetProportion) {
+          timer.targetProportion = Utils.parseTimeInput(targetProportion);
+        }
+        static resetTimer(timer) {
+          // Фикс (семантика "отмена"): «Сброс» полностью отменяет время,
+          // намерянное в текущей сессии. Дельта вычитается из всех счётчиков,
+          // которые увеличивал трекинг, — включая «Всего» и дневные итоги, —
+          // чтобы отменённое время не оставалось в «Фактической пропорции»
+          // и рекомендациях. Симметрично ручному вводу «Факт = 0».
+          const tracked = Number(timer.trackedSeconds) || 0;
+          const dailyBefore = Number(timer.dailyTotalSeconds) || 0;
+          const originalBefore = Number(timer.originalDailyTotalSeconds) || 0;
+          if (tracked !== 0) {
+            this.updateTrackedTime(timer, -tracked);
+          }
+          timer.trackedSeconds = 0;
+          // originalDailyTotalSeconds трекингом только подтягивается вверх
+          // (фикс БАГ #3), поэтому при отмене уменьшаем базу отдельно и лишь
+          // если она была подтянута сегодняшними замерами (original <= daily).
+          // Вчерашняя/ручная база выше дневного итога остаётся нетронутой.
+          if (tracked !== 0 && originalBefore <= dailyBefore) {
+            timer.originalDailyTotalSeconds = Math.max(
+              0,
+              originalBefore - tracked
+            );
+          }
+          // Защита от уже рассогласованных данных: счётчики не ниже нуля.
+          [
+            "totalTrackedSeconds",
+            "totalDuration",
+            "dailyTrackedSeconds",
+            "totalSeconds",
+            "dailyTotalSeconds",
+            "lifetimeTotalSeconds",
+          ].forEach(field => {
+            const value = Number(timer[field]) || 0;
+            if (value < 0) {
+              timer[field] = 0;
+            }
+          });
+        }
+        static startTracking(timer) {
+          timer.isTracking = true;
+          timer.startTime = new Date();
+        }
+        static stopTracking(timer) {
+          timer.startTime = null;
+          timer.isTracking = false;
+        }
+        static updateTrackedTime(timer, delta) {
+          timer.totalTrackedSeconds = (timer.totalTrackedSeconds || 0) + delta;
+          timer.totalDuration += delta;
+          timer.trackedSeconds += delta;
+          timer.dailyTrackedSeconds += delta;
+          timer.totalSeconds += delta;
+          timer.dailyTotalSeconds += delta;
+          timer.lifetimeTotalSeconds += delta;
+          // Фикс БАГ #3: базовый дневной итог больше не перезаписывается
+          // каждым тиком, а только подтягивается до уровня dailyTotalSeconds.
+          // Иначе после сброса сессии вчерашняя база (на которой держится
+          // "Фактическая пропорция") уничтожалась первым же тиком нового дня.
+          if ((timer.originalDailyTotalSeconds || 0) < timer.dailyTotalSeconds) {
+            timer.originalDailyTotalSeconds = timer.dailyTotalSeconds;
+          }
+        }
+
+        static calculateRemainingTime(timer) {
+          return timer.plannedSeconds - timer.trackedSeconds;
+        }
+        static updateRemainingTime(timer) {
+          timer.remainingSeconds = this.calculateRemainingTime(timer);
+          return timer.remainingSeconds;
+        }
+        static setPlannedSeconds(timer, seconds) {
+          timer.plannedSeconds = seconds;
+        }
+        static setBaseAllocation(timer, allocation) {
+          timer.baseAllocation = allocation;
+        }
+        static setTimerValue(timer, propertyName, seconds) {
+          timer[propertyName] = seconds;
+        }
+      }
+      class Timer {
+        constructor() {
+          const timer = TimerModel.createTimer();
+          Object.assign(this, timer);
+        }
+      }
+      class ProportionCalculator {
+        static calculateRecommendedProportions(timers, totalTime) {
+          const { spentToday, remainingTime } =
+            this.calculateSpentAndRemainingTime(timers, totalTime);
+          const realRemainingTime = TimeCalculator.getTotalTime();
+          if (remainingTime === 0) {
+            const recommendations = this.calculateInitialRecommendations(
+              timers,
+              realRemainingTime
+            );
+            const updatedRecommendations = this.distributeRemainingTime(
+              recommendations,
+              realRemainingTime
+            );
+            const normalizedRecommendations = this.normalizeRecommendations(
+              updatedRecommendations,
+              realRemainingTime
+            );
+            normalizedRecommendations.forEach(rec => {
+              const originalTimer = AppState.findTimerById(rec.id);
+              if (originalTimer) {
+                originalTimer.recommendedProportion = rec.recommendedProportion;
+              }
+            });
+            AppState.notify(
+              "recommendationsCalculated",
+              normalizedRecommendations
+            );
+            return normalizedRecommendations;
+          }
+          const recommendations = this.calculateInitialRecommendations(
+            timers,
+            remainingTime
+          );
+          const updatedRecommendations = this.distributeRemainingTime(
+            recommendations,
+            remainingTime
+          );
+          const normalizedRecommendations = this.normalizeRecommendations(
+            updatedRecommendations,
+            remainingTime
+          );
+          normalizedRecommendations.forEach(rec => {
+            const originalTimer = AppState.findTimerById(rec.id);
+            if (originalTimer) {
+              originalTimer.recommendedProportion = rec.recommendedProportion;
+            }
+          });
+          AppState.notify(
+            "recommendationsCalculated",
+            normalizedRecommendations
+          );
+          return normalizedRecommendations;
+        }
+        static calculateSpentAndRemainingTime(timers, totalTime) {
+          const spentToday = timers.reduce(
+            (sum, timer) => sum + timer.trackedSeconds,
+            0
+          );
+          const remainingTime = Math.max(totalTime - spentToday, 0);
+          return { spentToday, remainingTime };
+        }
+        static handleZeroRemainingTime(timers) {
+          const recommendations = timers.map(timer => ({
+            ...timer,
+            recommendedProportion: timer.targetProportion,
+          }));
+          recommendations.forEach(rec => {
+            const originalTimer = AppState.findTimerById(rec.id);
+            if (originalTimer) {
+              originalTimer.recommendedProportion = rec.recommendedProportion;
+            }
+          });
+          AppState.notify("recommendationsCalculated", recommendations);
+          return recommendations;
+        }
+        static calculateInitialRecommendations(timers, remainingTime) {
+          const sumTotal = timers.reduce(
+            (sum, timer) =>
+              sum +
+              Math.max(
+                timer.originalDailyTotalSeconds || 0,
+                timer.dailyTotalSeconds
+              ),
+            0
+          );
+          const totalTargetTime = sumTotal + remainingTime;
+          const totalWeight = timers.reduce((sum, t) => sum + t.proportion, 0);
+          return timers.map(timer => {
+            const baseTime = Math.max(
+              timer.originalDailyTotalSeconds || 0,
+              timer.dailyTotalSeconds
+            );
+            const targetTime = timer.targetProportion * totalTargetTime;
+            const currentTargetTime =
+              (timer.proportion / totalWeight) * remainingTime;
+            const necessaryTime = Math.max(targetTime - baseTime, 0);
+            const isOverperformed = timer.trackedSeconds > timer.plannedSeconds;
+            return { ...timer, necessaryTime, isOverperformed };
+          });
+        }
+        static distributeRemainingTime(recommendations, remainingTime) {
+          const nonOverperformed = recommendations.filter(
+            rec => !rec.isOverperformed
+          );
+          const sumNecessary = nonOverperformed.reduce(
+            (sum, rec) => sum + rec.necessaryTime,
+            0
+          );
+          const freeTime = remainingTime - sumNecessary;
+          if (freeTime > 0) {
+            const sumTargetProportions = nonOverperformed.reduce(
+              (sum, t) => sum + t.targetProportion,
+              0
+            );
+            return recommendations.map(rec => {
+              if (rec.isOverperformed) {
+                return { ...rec, necessaryTime: 0 };
+              }
+              return {
+                ...rec,
+                necessaryTime:
+                  rec.necessaryTime +
+                  (freeTime * rec.targetProportion) / sumTargetProportions,
+              };
+            });
+          }
+          return recommendations.map(rec => ({
+            ...rec,
+            necessaryTime: rec.isOverperformed ? 0 : rec.necessaryTime,
+          }));
+        }
+        static normalizeRecommendations(recommendations, remainingTime) {
+          const nonOverperformed = recommendations.filter(
+            rec => !rec.isOverperformed
+          );
+          const sumNecessary = nonOverperformed.reduce(
+            (sum, rec) => sum + rec.necessaryTime,
+            0
+          );
+          const divisor =
+            sumNecessary > remainingTime ? sumNecessary : remainingTime;
+          return recommendations.map(rec => {
+            if (rec.isOverperformed) {
+              return { ...rec, recommendedProportion: 0 };
+            }
+            return {
+              ...rec,
+              recommendedProportion: rec.necessaryTime / divisor,
+            };
+          });
+        }
+        static getActualProportion(id) {
+          const timer = AppState.findTimerById(id);
+          if (!timer) return 0;
+          const totalDuration = AppState.calculateTotalDuration();
+          if (totalDuration === 0) {
+            return this.calculateEqualProportion();
+          }
+          return this.calculateProportionForTimer(timer, totalDuration);
+        }
+        static calculateEqualProportion() {
+          return 100 / AppState.getTimers().length;
+        }
+        static calculateProportionForTimer(timer, totalDuration) {
+          const timerTotal = Math.max(
+            timer.originalDailyTotalSeconds || 0,
+            timer.dailyTotalSeconds
+          );
+          return (timerTotal / totalDuration) * 100;
+        }
+      }
+      class TimeCalculator {
+        static getTotalTime() {
+          const now = new Date();
+          const globalEndTime = AppState.getGlobalEndTime();
+          if (!globalEndTime) {
+            const midnight = new Date(now);
+            midnight.setDate(midnight.getDate() + 1);
+            midnight.setHours(0, 0, 0, 0);
+            return Math.max(0, (midnight - now) / 1000);
+          }
+          if (globalEndTime <= now) {
+            const nextDay = new Date(globalEndTime);
+            nextDay.setDate(nextDay.getDate() + 1);
+            return Math.max(0, (nextDay - now) / 1000);
+          }
+          return Math.max(0, (globalEndTime - now) / 1000);
+        }
+        static calculateRemainingTime(endTime, now) {
+          return (endTime - now) / 1000;
+        }
+        static parseGlobalEndTime(timeValue) {
+          // Фикс БАГ #4: строгая валидация формата "ЧЧ:ММ".
+          // Пустое/невалидное значение -> null (раньше "".split(":") давал [0]
+          // без минут, из-за чего создавалась Invalid Date и дальше шёл NaN).
+          const raw =
+            typeof timeValue === "string"
+              ? timeValue
+              : AppState.getGlobalEndTimeFromUI();
+          const m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(raw || "");
+          if (!m) return null;
+          const hours = Number(m[1]);
+          const minutes = Number(m[2]);
+          if (hours > 23 || minutes > 59) return null;
+          return [hours, minutes];
+        }
+        static getNextMidnight(now) {
+          const midnight = new Date(now.getTime());
+          midnight.setDate(midnight.getDate() + 1);
+          midnight.setHours(0, 0, 0, 0);
+          return midnight;
+        }
+        static createDateWithTime(hours, minutes) {
+          const now = new Date();
+          return {
+            date: new Date(
+              now.getFullYear(),
+              now.getMonth(),
+              now.getDate(),
+              hours,
+              minutes
+            ),
+            now,
+          };
+        }
+        static adjustDateIfNeeded(date, now) {
+          if (date <= now) {
+            date.setDate(date.getDate() + 1);
+          }
+          return date;
+        }
+        static createNewGlobalEndTime(hours, minutes) {
+          const { date, now } = this.createDateWithTime(hours, minutes);
+          const newGlobalEndTime = this.adjustDateIfNeeded(date, now);
+          return { newGlobalEndTime, now };
+        }
+        static calculateTotalWeight(timers) {
+          return timers.reduce((sum, t) => sum + t.proportion, 0);
+        }
+      }
+      class PriorityCalculator {
+        static calculatePriority(timers) {
+          const priorities = timers.map((timer, index) => {
+            const actualProportion = ProportionCalculator.getActualProportion(
+              timer.id
+            );
+            const diff = timer.recommendedProportion - actualProportion / 100;
+            return { timer, diff };
+          });
+          priorities.sort((a, b) => b.diff - a.diff);
+          priorities.forEach((priority, index) => {
+            const timerId = priority.timer.id;
+            const priorityDisplay = AppState.getTimerPriorityElement(timerId);
+            priorityDisplay.textContent = `Приоритет: ${index + 1}`;
+          });
+          return priorities;
+        }
+      }
+      class CalculationService {
+        static calculateRecommendedProportions(timers, totalTime) {
+          return ProportionCalculator.calculateRecommendedProportions(
+            timers,
+            totalTime
+          );
+        }
+        static calculatePriority(timers) {
+          return PriorityCalculator.calculatePriority(timers);
+        }
+        static getTotalTime() {
+          return TimeCalculator.getTotalTime();
+        }
+        static parseGlobalEndTime(timeValue) {
+          return TimeCalculator.parseGlobalEndTime(timeValue);
+        }
+        static createNewGlobalEndTime(hours, minutes) {
+          return TimeCalculator.createNewGlobalEndTime(hours, minutes);
+        }
+        static calculateRemainingTime(endTime, now) {
+          return TimeCalculator.calculateRemainingTime(endTime, now);
+        }
+        static calculateTotalWeight(timers) {
+          return TimeCalculator.calculateTotalWeight(timers);
+        }
+        static getActualProportion(id) {
+          const timer = AppState.findTimerById(id);
+          if (
+            SessionManager.isJustAfterReset === true &&
+            timer &&
+            timer.lastSessionDisplayProportion !== undefined &&
+            timer.dailyTotalSeconds === 0
+          ) {
+            return timer.lastSessionDisplayProportion;
+          }
+          return ProportionCalculator.getActualProportion(id);
+        }
+        static updateActiveTimers(delta) {
+          const timers = AppState.getTimers();
+          const updatedTimers = [];
+          timers.forEach(t => {
+            t.totalSeconds = t.totalSeconds || 0;
+            t.dailyTotalSeconds = t.dailyTotalSeconds || 0;
+            t.lifetimeTotalSeconds = t.lifetimeTotalSeconds || 0;
+            if (t.isTracking && t.startTime && !AppState.isAwayModeActive()) {
+              const now = new Date();
+              const actualDelta = (now - t.startTime) / 1000;
+              TimerModel.updateTrackedTime(t, delta);
+              updatedTimers.push(t);
+              if (
+                t.trackedSeconds >= t.plannedSeconds &&
+                t.trackedSeconds - t.plannedSeconds < delta
+              ) {
+                NotificationService.notifyTaskCompleted(t.name);
+              }
+            }
+          });
+          updatedTimers.forEach(t => {
+            AppState.notify("timerUpdated", t);
+            AppState.notify("timerStateChanged", t);
+          });
+        }
+        static updateCalculations() {
+          const prevSessionEnd = AppState.getLastSessionEndTime();
+          const resetDue =
+            AppState.getNeedsReset() ||
+            (prevSessionEnd && new Date() >= prevSessionEnd);
+          SessionManager.checkAndPerformReset();
+          const now = new Date();
+          let delta = (now - AppState.getLastUpdateTime()) / 1000;
+          // Фикс БАГ #6: если в этом тике пересечена граница сессии (вкладка
+          // "спала" и проснулась уже за границей), время ДО границы не
+          // зачисляется в новую сессию — иначе активный таймер получал сразу
+          // всю дельту (например, 2 часа) в обнулённый счётчик.
+          if (resetDue && prevSessionEnd && now >= prevSessionEnd) {
+            delta = Math.min(delta, (now - prevSessionEnd) / 1000);
+            if (delta < 0) delta = 0;
+          }
+          AppState.setLastUpdateTime(now);
+          const sessionRolled = TimeManager.updateGlobalEndTime(now);
+          if (sessionRolled) {
+            // Наступил «Конец»: автообновление планов и рекомендаций
+            // для новой сессии (бывшие кнопки «Обновить всё» и
+            // «Рекомендация» + «Применить рекомендацию»).
+            AppController.autoUpdate();
+          }
+          this.updateActiveTimers(delta);
+          TimeManager.handleAwayMode(now, delta);
+          TimeManager.handleAutoAwayMode(delta);
+          AppState.notify("calculationsUpdated");
+          AppState.notify("displayNeedsUpdate");
+        }
+        static findTimerById(id) {
+          return AppState.findTimerById(id);
+        }
+        static updateBaseAllocation(timer, remaining, totalWeight) {
+          // Защита от вырожденных весов (все пропорции = 0): при нулевой
+          // сумме весов распределять нечего — иначе 0/0 даёт NaN в планах.
+          if (!(totalWeight > 0)) return 0;
+          return (timer.proportion / totalWeight) * remaining;
+        }
+        static updateTimerPlannedSeconds(timer, newPlan, timerId) {
+          // Фикс БАГ #1: timerId === null теперь означает "пересчитать планы
+          // ВСЕМ таймерам" (установка/смена "Конца", ролловер суток,
+          // добавление/удаление таймера, изменение пропорций).
+          // Раньше планы обновлялись только при явном timerId, поэтому при
+          // наступлении конца сессии "План"/"Осталось" оставались вчерашними
+          // или нулевыми.
+          if (timerId === null || timer.id === timerId) {
+            TimerModel.setPlannedSeconds(timer, newPlan);
+          }
+        }
+        static updateTimerPlans(timers, remaining, timerId, totalWeight) {
+          const updatedTimers = [];
+          timers.forEach(t => {
+            const newPlan = this.updateBaseAllocation(
+              t,
+              remaining,
+              totalWeight
+            );
+            TimerModel.setBaseAllocation(t, newPlan);
+            this.updateTimerPlannedSeconds(t, newPlan, timerId);
+            updatedTimers.push(t);
+          });
+          updatedTimers.forEach(t => {
+            AppState.notify("timerUpdated", t);
+          });
+        }
+      }
+      class TimerView {
+        static init() {
+          this.setupEventListeners();
+        }
+        static setupEventListeners() {
+          AppState.subscribe("timerAdded", this.handleTimerAdded.bind(this));
+          AppState.subscribe(
+            "timerRemoved",
+            this.handleTimerRemoved.bind(this)
+          );
+          AppState.subscribe(
+            "timerUpdated",
+            this.handleTimerUpdated.bind(this)
+          );
+          AppState.subscribe(
+            "timersChanged",
+            this.handleTimersChanged.bind(this)
+          );
+          AppState.subscribe(
+            "awayModeChanged",
+            this.handleAwayModeChanged.bind(this)
+          );
+          AppState.subscribe(
+            "displayNeedsUpdate",
+            this.updateDisplay.bind(this)
+          );
+          AppState.subscribe(
+            "timerStateChanged",
+            this.updateTimerTrackButton.bind(this)
+          );
+          AppState.subscribe(
+            "recommendationsCalculated",
+            this.updateRecommendationsDisplay.bind(this)
+          );
+          AppState.subscribe(
+            "calculationsUpdated",
+            this.handleCalculationsUpdated.bind(this)
+          );
+        }
+        static updateTimeDisplay(timer, propertyName, displayId) {
+          const timerSeconds = timer[propertyName];
+          document.getElementById(`${displayId}-${timer.id}`).textContent =
+            Utils.formatTime(timerSeconds);
+        }
+        static handleTimerAdded(timer) {
+          this.addTimerElement(timer);
+          this.updateDisplay();
+        }
+        static handleTimerRemoved(timer) {
+          const elem = AppState.getTimerElement(timer.id);
+          if (elem) elem.remove();
+          this.updateDisplay();
+        }
+        static handleTimerUpdated(timer) {
+          this.updateTimerPlannedTime(timer);
+          this.updateTimerTrackedTime(timer);
+          this.updateTimerTotalTime(timer);
+          this.updateTimerProportion(timer);
+          this.updateTimerRemainingTime(timer);
+          this.updateTimerTrackButton(timer);
+        }
+        static handleTimersChanged(timers) {
+          this.updateDisplay();
+        }
+        static handleAwayModeChanged(isActive) {
+          this.updateAwayButton();
+        }
+        static handleCalculationsUpdated() {
+          const timers = AppState.getTimers();
+          timers.forEach(timer => {
+            this.updateTimerPlannedTime(timer);
+            this.updateTimerTrackedTime(timer);
+            this.updateTimerTotalTime(timer);
+            this.updateTimerProportion(timer);
+            this.updateTimerRemainingTime(timer);
+          });
+        }
+        static addTimerElement(timer) {
+          const container = AppState.getTimersContainerElement();
+          const timerDiv = this.createTimerContainer(timer);
+          const [timerElements, targetProportionInput] =
+            this.createTimerElements(timer);
+          this.appendTimerElements(timerDiv, timerElements, timer);
+          timer.targetProportion = parseFloat(targetProportionInput.value);
+          container.appendChild(timerDiv);
+          // Фикс (интерфейс): «Рекомендация» больше не вкладывается внутрь
+          // дисплея «Факт» — у неё есть собственная строка (см. appendTimerElements).
+        }
+        static createTimerContainer(timer) {
+          const timerDiv = document.createElement("div");
+          timerDiv.className = "timer-container";
+          timerDiv.id = `timer-${timer.id}`;
+          return timerDiv;
+        }
+        static createTimerElements(timer) {
+          const inputElements = this.createInputElements(timer);
+          const displayElements = this.createDisplayElements(timer);
+          const buttonElements = this.createButtonElements(
+            timer,
+            inputElements
+          );
+          return [
+            {
+              ...inputElements,
+              ...displayElements,
+              ...buttonElements,
+            },
+            inputElements.targetProportionInput,
+          ];
+        }
+        static createDisplayElements(timer) {
+          const plannedDisplay = this.createPlannedTimeDisplay(timer);
+          const trackedDisplay = this.createTrackedDisplay(timer);
+          const totalDisplay = this.createTotalDisplay(timer);
+          const remainingDisplay = this.createRemainingTimeDisplay(timer);
+          const recommendationDisplay = this.createRecommendationDisplay(timer);
+          const priorityDisplay = this.createPriorityDisplay(timer);
+          const actualProportionDisplay =
+            this.createActualProportionDisplay(timer);
+          return {
+            plannedDisplay,
+            trackedDisplay,
+            totalDisplay,
+            remainingDisplay,
+            recommendationDisplay,
+            priorityDisplay,
+            actualProportionDisplay,
+          };
+        }
+        static appendTimerElements(timerDiv, elements, timer) {
+          // Фикс (интерфейс): строки карточки идут в логическом порядке,
+          // а каждое поле снабжено подписью. Раньше название и пропорция
+          // стояли внизу без подписей (между «Фактическая пропорция» и
+          // «План»), одиночная подпись «Факт:» дублировала префикс дисплея,
+          // а «Рекомендация» была вложена внутрь дисплея «Факт».
+          const makeContainer = (className, children) => {
+            const container = document.createElement("div");
+            container.className = className;
+            children.forEach(child => container.appendChild(child));
+            timerDiv.appendChild(container);
+            return container;
+          };
+          const makeLabel = text => {
+            const label = document.createElement("label");
+            label.className = "field-label";
+            label.textContent = text;
+            return label;
+          };
+
+          // 0. Для задач, созданных разбиением: строка доли сверху карточки.
+          //    Наведение на долю подсвечивает всех сиблингов этого разбиения.
+          if (Number.isFinite(timer.splitShare)) {
+            const shareContainer = makeContainer("split-share-container", []);
+            const shareEl = document.createElement("span");
+            shareEl.className = "split-share";
+            shareEl.id = `split-share-${timer.id}`;
+            shareEl.setAttribute("data-split-id", String(timer.splitId || ""));
+            const parentPart = timer.splitParentName
+              ? ` \u2190 \u00ab${timer.splitParentName}\u00bb`
+              : "";
+            shareEl.textContent = `\u0414\u043e\u043b\u044f: ${Number(
+              timer.splitShare
+            ).toFixed(3)}${parentPart}`;
+            shareEl.title =
+              "\u041d\u0430\u0432\u0435\u0434\u0438\u0442\u0435, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u043e\u0432 \u044d\u0442\u043e\u0433\u043e \u0440\u0430\u0437\u0431\u0438\u0435\u043d\u0438\u044f";
+            shareContainer.appendChild(shareEl);
+          }
+          // 1. Название задачи
+          makeContainer("name-input-container", [
+            makeLabel("Название:"),
+            elements.nameInput,
+          ]);
+          // 2. Пропорции: текущая (вес для плана) и целевая
+          makeContainer("proportion-container", [elements.proportionDiv]);
+          makeContainer("target-container", [elements.target]);
+          // 3. Основное время: План / Факт / Осталось / Всего
+          makeContainer("planned-display-container", [
+            elements.plannedDisplay,
+          ]);
+          makeContainer("tracked-display-container", [
+            elements.trackedDisplay,
+          ]);
+          makeContainer("remaining-display-container", [
+            elements.remainingDisplay,
+          ]);
+          makeContainer("total-display-container", [elements.totalDisplay]);
+          // 4. Ручная коррекция счётчиков (подписанные строки)
+          makeContainer("tracked-inputs-container", [
+            makeLabel("Факт вручную:"),
+            elements.trackedHoursInput,
+            elements.trackedMinutesInput,
+            elements.trackedSecondsInput,
+            elements.trackedApplyButton,
+          ]);
+          makeContainer("total-inputs-container", [
+            makeLabel("Всего вручную:"),
+            elements.hoursInput,
+            elements.minutesInput,
+            elements.secondsInput,
+            elements.applyButton,
+          ]);
+          // 5. Аналитика
+          makeContainer("recommendation-display-container", [
+            elements.recommendationDisplay,
+          ]);
+          makeContainer("priority-display-container", [
+            elements.priorityDisplay,
+          ]);
+          makeContainer("actual-proportion-container", [
+            elements.actualProportionDisplay,
+          ]);
+          // 6. Управление
+          makeContainer("buttons-container", [
+            elements.trackButton,
+            elements.resetButton,
+            elements.deleteButton,
+            elements.updateButton,
+            elements.splitButton,
+          ]);
+        }
+        static createNameInput(timer) {
+          return UIFactory.createInput("text", {
+            placeholder: "Название задачи",
+            value: timer.name,
+            "data-action": "name",
+          });
+        }
+        static createTargetProportionElements(timer) {
+          const target = document.createElement("div");
+          const targetLabel = document.createElement("label");
+          targetLabel.className = "field-label";
+          targetLabel.textContent = "Целевая пропорция:";
+          target.appendChild(targetLabel);
+          const targetProportionInput = UIFactory.createInput("number", {
+            min: "0",
+            step: "0.1",
+            style: { width: "60px" },
+            value: timer.targetProportion,
+            id: `target-proportion-${timer.id}`,
+            "data-action": "target-proportion",
+          });
+          target.appendChild(targetProportionInput);
+          return [target, targetProportionInput];
+        }
+        static createProportionElements(timer) {
+          const proportionDiv = document.createElement("div");
+          // Фикс (интерфейс): у поля пропорции раньше не было подписи —
+          // было непонятно, за что отвечает поле под «Фактической пропорцией».
+          const proportionLabel = document.createElement("label");
+          proportionLabel.className = "field-label";
+          proportionLabel.textContent = "Пропорция (вес):";
+          proportionDiv.appendChild(proportionLabel);
+          const denomInput = UIFactory.createInput("number", {
+            min: "0",
+            step: "0.1",
+            style: { width: "60px" },
+            value: timer.proportion,
+            id: `proportion-${timer.id}`,
+            "data-action": "proportion",
+          });
+          proportionDiv.appendChild(denomInput);
+          return proportionDiv;
+        }
+        static createTimeInputs() {
+          const hoursInput = UIFactory.createTimeInput("0", "23");
+          const minutesInput = UIFactory.createTimeInput("0", "59");
+          const secondsInput = UIFactory.createTimeInput("0", "59");
+          return [hoursInput, minutesInput, secondsInput];
+        }
+        static createTrackedTimeInputs() {
+          return this.createTimeInputs();
+        }
+        static createTotalTimeInputs() {
+          const [hoursInput, minutesInput, secondsInput] =
+            this.createTimeInputs();
+          hoursInput.setAttribute("data-type", "total-hours");
+          minutesInput.setAttribute("data-type", "total-minutes");
+          secondsInput.setAttribute("data-type", "total-seconds");
+          return [hoursInput, minutesInput, secondsInput];
+        }
+        static createTrackedApplyButton(
+          timer,
+          hoursInput,
+          minutesInput,
+          secondsInput
+        ) {
+          const applyButton = UIFactory.createApplyButton(
+            "Применить",
+            "apply-tracked"
+          );
+          hoursInput.setAttribute("data-type", "tracked-hours");
+          minutesInput.setAttribute("data-type", "tracked-minutes");
+          secondsInput.setAttribute("data-type", "tracked-seconds");
+          return applyButton;
+        }
+        static createTotalApplyButton(
+          timer,
+          hoursInput,
+          minutesInput,
+          secondsInput
+        ) {
+          const applyButton = UIFactory.createApplyButton(
+            "Применить",
+            "apply-total"
+          );
+          return applyButton;
+        }
+        static createRemainingTimeDisplay(timer) {
+          const remainingDisplay = document.createElement("div");
+          remainingDisplay.className = "time-display";
+          remainingDisplay.innerHTML = `Осталось: <span id="remaining-${
+            timer.id
+          }">${Utils.formatTime(timer.remainingSeconds)}</span>`;
+          return remainingDisplay;
+        }
+        static createRecommendationDisplay(timer) {
+          const recommendationDisplay = document.createElement("div");
+          recommendationDisplay.className = "recommendation-display";
+          recommendationDisplay.id = `recommendation-${timer.id}`;
+          recommendationDisplay.textContent = "Рекомендация: ";
+          return recommendationDisplay;
+        }
+        static createPriorityDisplay(timer) {
+          const priorityDisplay = document.createElement("div");
+          priorityDisplay.id = `priority-${timer.id}`;
+          priorityDisplay.textContent = "Приоритет: ";
+          return priorityDisplay;
+        }
+        static createActualProportionDisplay(timer) {
+          const actualProportionDisplay = document.createElement("div");
+          actualProportionDisplay.className = "actual-proportion";
+          actualProportionDisplay.id = `actual-proportion-${timer.id}`;
+          actualProportionDisplay.textContent = `Фактическая пропорция: ${timer.proportion}`;
+          return actualProportionDisplay;
+        }
+        static createControlButtons(timer) {
+          const trackButton = this.createTrackButton(timer);
+          const resetButton = this.createResetButton(timer);
+          const deleteButton = this.createDeleteButton(timer);
+          const updateButton = this.createUpdateButton(timer);
+          const splitButton = this.createSplitButton(timer);
+          return [trackButton, resetButton, deleteButton, updateButton, splitButton];
+        }
+        static createTrackButton(timer) {
+          return UIFactory.createButton(
+            timer.isTracking ? "Пауза" : "Старт",
+            "track"
+          );
+        }
+        static createResetButton(timer) {
+          return UIFactory.createButton("Сброс", "reset");
+        }
+        static createDeleteButton(timer) {
+          return UIFactory.createButton("Удалить", "delete");
+        }
+        static createUpdateButton(timer) {
+          return UIFactory.createButton("Обновить", "update");
+        }
+        static createSplitButton(timer) {
+          return UIFactory.createButton("Разбить", "split");
+        }
+        static syncProportionInputs(timer) {
+          // Синхронизирует поля «Пропорция (вес)» и «Целевая пропорция» с моделью
+          // (нужно после групповых операций: добавление ко всем, группа, удаление)
+          const propInput = AppState.getTimerProportionElement(timer.id);
+          if (propInput) propInput.value = String(timer.proportion);
+          const targetInput = AppState.getTimerTargetProportionElement(timer.id);
+          if (targetInput) targetInput.value = String(timer.targetProportion);
+        }
+        static updateTimerPlannedTime(timer) {
+          const plannedElem = AppState.getTimerPlannedElement(timer.id);
+          if (plannedElem) {
+            plannedElem.textContent = Utils.formatTime(timer.plannedSeconds);
+          }
+        }
+        static updateTimerTrackedTime(timer) {
+          const trackedElem = AppState.getTimerTrackedElement(timer.id);
+          if (trackedElem) {
+            trackedElem.textContent = Utils.formatTime(timer.trackedSeconds);
+          }
+        }
+        static updateTimerTotalTime(timer) {
+          const totalElem = AppState.getTimerTotalElement(timer.id);
+          if (totalElem) {
+            totalElem.textContent = Utils.formatTime(
+              timer.lifetimeTotalSeconds
+            );
+          }
+        }
+        static updateTimerProportion(timer) {
+          const timerContainer = AppState.getTimerElement(timer.id);
+          if (timerContainer) {
+            const actualProportionDisplay =
+              timerContainer.querySelector(".actual-proportion");
+            if (actualProportionDisplay) {
+              const actualProportion = CalculationService.getActualProportion(
+                timer.id
+              );
+              actualProportionDisplay.textContent = `Фактическая пропорция: ${(
+                actualProportion / 100
+              ).toFixed(4)}`;
+            }
+          }
+        }
+        static updateTimerRemainingTime(timer) {
+          const remainingTime = TimerModel.updateRemainingTime(timer);
+          const remainingElem = AppState.getTimerRemainingElement(timer.id);
+          if (remainingElem) {
+            remainingElem.textContent = Utils.formatTime(remainingTime);
+          }
+        }
+        static updateTimerTrackButton(timer) {
+          const timerDiv = AppState.getTimerElement(timer.id);
+          if (timerDiv) {
+            const buttons = timerDiv.getElementsByTagName("button");
+            for (let btn of buttons) {
+              if (btn.textContent === "Старт" || btn.textContent === "Пауза") {
+                btn.textContent = timer.isTracking ? "Пауза" : "Старт";
+                break;
+              }
+            }
+          }
+        }
+        static updateAwayButton() {
+          const awayBtn = AppState.getAwayButtonElement();
+          if (awayBtn) {
+            const awayModeActive = AppState.isAwayModeActive();
+            awayBtn.disabled = awayModeActive;
+            if (awayModeActive) {
+              awayBtn.classList.add("active-away");
+            } else {
+              awayBtn.classList.remove("active-away");
+            }
+          }
+        }
+        static updateDisplay() {
+          const timers = AppState.getTimers();
+          timers.forEach(timer => {
+            this.updateTimerPlannedTime(timer);
+            this.updateTimerTrackedTime(timer);
+            this.updateTimerTotalTime(timer);
+            this.updateTimerProportion(timer);
+            this.updateTimerRemainingTime(timer);
+            this.updateTimerTrackButton(timer);
+          });
+          this.updateAwayButton();
+        }
+        static updateAllTimerProportions() {
+          const timers = AppState.getTimers();
+          timers.forEach(t => {
+            const timerContainer = AppState.getTimerElement(t.id);
+            if (timerContainer) {
+              const actualProportionDisplay =
+                timerContainer.querySelector(".actual-proportion");
+              if (actualProportionDisplay) {
+                const actualProportion = CalculationService.getActualProportion(
+                  t.id
+                );
+                actualProportionDisplay.textContent = `Фактическая пропорция: ${
+                  actualProportion / 100
+                }`;
+              }
+            }
+          });
+        }
+        static createInputElements(timer) {
+          const nameInput = this.createNameInput(timer);
+          const [target, targetProportionInput] =
+            this.createTargetProportionElements(timer);
+          const proportionDiv = this.createProportionElements(timer);
+          const [trackedHoursInput, trackedMinutesInput, trackedSecondsInput] =
+            this.createTrackedTimeInputs();
+          const [hoursInput, minutesInput, secondsInput] =
+            this.createTotalTimeInputs();
+          return {
+            nameInput,
+            target,
+            proportionDiv,
+            targetProportionInput,
+            trackedHoursInput,
+            trackedMinutesInput,
+            trackedSecondsInput,
+            hoursInput,
+            minutesInput,
+            secondsInput,
+          };
+        }
+        static createButtonElements(timer, inputElements) {
+          const [trackButton, resetButton, deleteButton, updateButton, splitButton] =
+            this.createControlButtons(timer);
+          const trackedApplyButton = this.createTrackedApplyButton(
+            timer,
+            inputElements.trackedHoursInput,
+            inputElements.trackedMinutesInput,
+            inputElements.trackedSecondsInput
+          );
+          const applyButton = this.createTotalApplyButton(
+            timer,
+            inputElements.hoursInput,
+            inputElements.minutesInput,
+            inputElements.secondsInput
+          );
+          return {
+            trackButton,
+            resetButton,
+            deleteButton,
+            updateButton,
+            splitButton,
+            trackedApplyButton,
+            applyButton,
+          };
+        }
+        static createPlannedTimeDisplay(timer) {
+          const plannedDisplay = document.createElement("div");
+          plannedDisplay.className = "time-display";
+          plannedDisplay.innerHTML = `План: <span id="planned-${
+            timer.id
+          }">${Utils.formatTime(timer.plannedSeconds)}</span>`;
+          return plannedDisplay;
+        }
+        static createTrackedDisplay(timer) {
+          const trackedDisplay = document.createElement("div");
+          trackedDisplay.className = "time-display";
+          trackedDisplay.innerHTML = `Факт: <span id="tracked-${
+            timer.id
+          }">${Utils.formatTime(timer.trackedSeconds)}</span>`;
+          return trackedDisplay;
+        }
+        static createTotalDisplay(timer) {
+          const totalDisplay = document.createElement("div");
+          totalDisplay.className = "time-display";
+          totalDisplay.innerHTML = `Всего: <span id="total-${
+            timer.id
+          }">${Utils.formatTime(timer.lifetimeTotalSeconds)}</span>`;
+          return totalDisplay;
+        }
+        static updateRecommendationsDisplay(recommendations) {
+          recommendations.forEach(rec => {
+            this.updateRecommendationDisplay(rec.id, rec.recommendedProportion);
+          });
+        }
+        static updateRecommendationDisplay(timerId, recommendedProportion) {
+          const recommendationDisplay =
+            AppState.getTimerRecommendationElement(timerId);
+          recommendationDisplay.textContent = `Рекомендация: ${recommendedProportion.toFixed(
+            13
+          )}`;
+        }
+      }
+      class TimeManager {
+        static updateGlobalEndTime(now) {
+          const globalEndTime = AppState.getGlobalEndTime();
+          if (globalEndTime && now >= globalEndTime) {
+            globalEndTime.setDate(globalEndTime.getDate() + 1);
+            AppState.setGlobalEndTime(globalEndTime);
+            AppState.setInitialAvailable((globalEndTime - now) / 1000);
+            this.updateGlobalEndTimeAndPlans(null, null, false);
+            return true; // произошёл ролловер сессии
+          }
+          return false;
+        }
+        static updateGlobalEndTimeAndPlans(
+          timeValue,
+          timerId,
+          shouldUpdateDisplay = false
+        ) {
+          const parsed = CalculationService.parseGlobalEndTime(timeValue);
+          const now = new Date();
+          let newGlobalEndTime = null;
+          let sessionEndTime;
+          if (parsed) {
+            const [hours, minutes] = parsed;
+            const created = CalculationService.createNewGlobalEndTime(
+              hours,
+              minutes
+            );
+            newGlobalEndTime = created.newGlobalEndTime;
+            sessionEndTime = newGlobalEndTime;
+          } else {
+            // Фикс БАГ #4: поле очищено/значение невалидно — считаем временем
+            // конца полночь (как getTotalTime по умолчанию), а не оставляем
+            // в состоянии Invalid Date, из-за которой везде появлялся NaN.
+            sessionEndTime = TimeCalculator.getNextMidnight(now);
+          }
+          AppState.setGlobalEndTime(newGlobalEndTime);
+          SessionManager.updateSessionEndTime(sessionEndTime);
+          const remaining = CalculationService.calculateRemainingTime(
+            sessionEndTime,
+            now
+          );
+          AppState.setInitialAvailable(remaining);
+          const timers = AppState.getTimers();
+          const totalWeight = CalculationService.calculateTotalWeight(timers);
+          CalculationService.updateTimerPlans(
+            timers,
+            remaining,
+            timerId,
+            totalWeight
+          );
+          if (shouldUpdateDisplay) {
+            AppState.notify("displayNeedsUpdate");
+          }
+        }
+        static toggleAway() {
+          const newAwayModeActive = !AppState.isAwayModeActive();
+          AppState.setAwayModeActive(newAwayModeActive);
+          if (newAwayModeActive) {
+            this.activateAwayMode();
+          }
+          AppState.notify("displayNeedsUpdate");
+        }
+        static activateAwayMode() {
+          AppState.setAwayStartTime(new Date());
+          const timers = AppState.getTimers();
+          const updatedTimers = [];
+          timers.forEach(t => {
+            if (t.isTracking) {
+              const currentTime = new Date();
+              const timeDiff = (currentTime - t.startTime) / 1000;
+              TimerModel.stopTracking(t);
+              updatedTimers.push(t);
+            }
+          });
+          updatedTimers.forEach(t => {
+            AppState.notify("timerStateChanged", t);
+          });
+        }
+        static handleAwayMode(now, delta) {
+          if (AppState.isAwayModeActive() && AppState.getAwayStartTime()) {
+            const elapsed = (now - AppState.getAwayStartTime()) / 1000;
+            const timers = AppState.getTimers();
+            const totalProportion = timers.reduce(
+              (sum, t) => sum + t.proportion,
+              0
+            );
+            const updatedTimers = [];
+            timers.forEach(t => {
+              // Фикс БАГ #5: отсутствие уменьшает доступное время, но план
+              // отдельного таймера не может стать отрицательным — зажимаем в 0.
+              // При вырожденных весах (totalProportion = 0) не вычитаем ничего,
+              // чтобы не получить NaN (Math.max(0, NaN) === NaN).
+              if (totalProportion > 0) {
+                t.plannedSeconds = Math.max(
+                  0,
+                  t.plannedSeconds - elapsed * (t.proportion / totalProportion)
+                );
+              }
+              updatedTimers.push(t);
+            });
+            updatedTimers.forEach(t => {
+              AppState.notify("timerUpdated", t);
+            });
+            AppState.setAwayStartTime(now);
+          }
+        }
+        static handleAutoAwayMode(delta) {
+          const timers = AppState.getTimers();
+          let activeTimer = timers.find(t => t.isTracking);
+          if (
+            activeTimer &&
+            activeTimer.trackedSeconds > activeTimer.plannedSeconds
+          ) {
+            AppState.setAutoAwayModeActive(true);
+          } else {
+            AppState.setAutoAwayModeActive(false);
+          }
+          // Код, уменьшающий время на других таймерах, отключен
+          /*
+          if (AppState.isAutoAwayModeActive() && activeTimer) {
+            const updatedTimers = [];
+            timers.forEach(t => {
+              if (!t.isTracking) {
+                t.plannedSeconds = Math.max(0, t.plannedSeconds - delta);
+                updatedTimers.push(t);
+              }
+            });
+            updatedTimers.forEach(t => {
+              AppState.notify('timerUpdated', t);
+            });
+          }
+          */
+        }
+      }
+      class MenuController {
+        // Выпадающее меню «Операции» (кнопка справа наверху)
+        static toggle() {
+          document.getElementById("operationsMenu").classList.toggle("visible");
+        }
+        static hide() {
+          document
+            .getElementById("operationsMenu")
+            .classList.remove("visible");
+        }
+      }
+      class ModalController {
+        // Общие модальные окна: контент строится контроллерами операций,
+        // клики маршрутизируются по data-modal-action.
+        static context = null;
+        static overlay() {
+          return document.getElementById("modalOverlay");
+        }
+        static box() {
+          return document.getElementById("modalBox");
+        }
+        static open() {
+          this.overlay().classList.remove("hidden");
+        }
+        static close() {
+          this.overlay().classList.add("hidden");
+          this.box().innerHTML = "";
+          this.context = null;
+        }
+        static isOpen() {
+          return !this.overlay().classList.contains("hidden");
+        }
+        static setError(text) {
+          const el = document.getElementById("modalError");
+          if (el) el.textContent = text || "";
+        }
+        static el(tag, attrs = {}, text) {
+          const node = document.createElement(tag);
+          for (const [key, value] of Object.entries(attrs)) {
+            if (key === "class") node.className = value;
+            else if (key === "value") node.value = value;
+            else node.setAttribute(key, value);
+          }
+          if (text !== undefined) node.textContent = text;
+          return node;
+        }
+        static errorRow() {
+          return this.el("div", { class: "modal-error", id: "modalError" });
+        }
+        static buttonRow(okId, okAction, okText) {
+          const row = this.el("div", { class: "modal-row" });
+          row.appendChild(
+            this.el(
+              "button",
+              { id: okId, "data-modal-action": okAction },
+              okText
+            )
+          );
+          row.appendChild(
+            this.el(
+              "button",
+              { id: "modalCancel", "data-modal-action": "cancel" },
+              "\u041e\u0442\u043c\u0435\u043d\u0430"
+            )
+          );
+          return row;
+        }
+        static handleOverlayClick(event) {
+          const target = event.target;
+          if (target === ModalController.overlay()) {
+            ModalController.close();
+            return;
+          }
+          if (!target.getAttribute) return;
+          const action = target.getAttribute("data-modal-action");
+          if (!action) return;
+          if (action === "cancel") {
+            ModalController.close();
+          } else if (action === "add-confirm") {
+            AddTaskController.confirm();
+          } else if (action === "group-confirm") {
+            GroupTaskController.confirm();
+          } else if (action === "split-confirm") {
+            SplitController.confirm();
+          } else if (action === "split-add-row") {
+            SplitController.addRow();
+          } else if (
+            typeof action === "string" &&
+            action.indexOf("cloud-") === 0
+          ) {
+            CloudController.handleAction(action);
+          }
+        }
+      }
+      class AddTaskController {
+        // «+ Добавить таймер» = «Добавить ко всем» (операция 4 py-скрипта):
+        // имя + доля p; существующие задачи ужимаются в (1-p), новая получает
+        // долю p и виртуальную историю, чтобы сразу попасть в целевую долю.
+        static openModal() {
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          box.appendChild(
+            M.el(
+              "div",
+              { class: "modal-title" },
+              "\u041d\u043e\u0432\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430 (\u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043a\u043e \u0432\u0441\u0435\u043c)"
+            )
+          );
+          const nameRow = M.el("div", { class: "modal-row" });
+          nameRow.appendChild(
+            M.el("label", { for: "addTaskName" }, "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435:")
+          );
+          nameRow.appendChild(
+            M.el("input", {
+              type: "text",
+              id: "addTaskName",
+              placeholder: "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438",
+            })
+          );
+          box.appendChild(nameRow);
+          const shareRow = M.el("div", { class: "modal-row" });
+          shareRow.appendChild(
+            M.el(
+              "label",
+              { for: "addTaskProportion" },
+              "\u0414\u043e\u043b\u044f (0..1, \u043c\u043e\u0436\u043d\u043e 1/4):"
+            )
+          );
+          shareRow.appendChild(
+            M.el("input", { type: "text", id: "addTaskProportion", value: "0.5" })
+          );
+          box.appendChild(shareRow);
+          box.appendChild(M.errorRow());
+          box.appendChild(
+            M.buttonRow(
+              "addTaskConfirm",
+              "add-confirm",
+              "\u0421\u043e\u0437\u0434\u0430\u0442\u044c"
+            )
+          );
+          M.context = { type: "add" };
+          M.open();
+        }
+        static confirm() {
+          const name = (
+            document.getElementById("addTaskName").value || ""
+          ).trim();
+          const share = Utils.parseShareInput(
+            document.getElementById("addTaskProportion").value
+          );
+          if (!Number.isFinite(share) || share < 0 || share >= 1) {
+            ModalController.setError(
+              "\u0414\u043e\u043b\u044f \u0434\u043e\u043b\u0436\u043d\u0430 \u0431\u044b\u0442\u044c \u0447\u0438\u0441\u043b\u043e\u043c \u043e\u0442 0 \u0434\u043e 1 (\u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440 0.25 \u0438\u043b\u0438 1/4)"
+            );
+            return;
+          }
+          ModalController.close();
+          AppController.addNewTimer(name, share);
+        }
+      }
+      class GroupTaskController {
+        // «Создать задачу внутри группы» (операция 2 py-скрипта):
+        // группа отмечается галочками — для каждой новой задачи она своя.
+        static openModal() {
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          box.appendChild(
+            M.el(
+              "div",
+              { class: "modal-title" },
+              "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u0437\u0430\u0434\u0430\u0447\u0443 \u0432\u043d\u0443\u0442\u0440\u0438 \u0433\u0440\u0443\u043f\u043f\u044b"
+            )
+          );
+          box.appendChild(
+            M.el(
+              "div",
+              {},
+              "\u041e\u0442\u043c\u0435\u0442\u044c\u0442\u0435 \u0433\u0430\u043b\u043e\u0447\u043a\u0430\u043c\u0438 \u0442\u0430\u0439\u043c\u0435\u0440\u044b \u0433\u0440\u0443\u043f\u043f\u044b:"
+            )
+          );
+          const list = M.el("div", { id: "groupTaskList" });
+          AppState.getTimers().forEach(t => {
+            const item = M.el("label", { class: "group-select-item" });
+            item.appendChild(
+              M.el("input", {
+                type: "checkbox",
+                class: "group-checkbox",
+                "data-timer-id": String(t.id),
+              })
+            );
+            const name = t.name
+              ? t.name
+              : "(\u0431\u0435\u0437 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044f)";
+            item.appendChild(
+              document.createTextNode(
+                ` ${name} \u00b7 \u0446\u0435\u043b\u044c ${Number(
+                  t.targetProportion
+                ).toFixed(3)}`
+              )
+            );
+            list.appendChild(item);
+          });
+          box.appendChild(list);
+          const nameRow = M.el("div", { class: "modal-row" });
+          nameRow.appendChild(
+            M.el("label", { for: "groupTaskName" }, "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435:")
+          );
+          nameRow.appendChild(
+            M.el("input", { type: "text", id: "groupTaskName" })
+          );
+          box.appendChild(nameRow);
+          const shareRow = M.el("div", { class: "modal-row" });
+          shareRow.appendChild(
+            M.el(
+              "label",
+              { for: "groupTaskProportion" },
+              "\u0414\u043e\u043b\u044f \u0432\u043d\u0443\u0442\u0440\u0438 \u0433\u0440\u0443\u043f\u043f\u044b (0..1):"
+            )
+          );
+          shareRow.appendChild(
+            M.el("input", {
+              type: "text",
+              id: "groupTaskProportion",
+              value: "0.5",
+            })
+          );
+          box.appendChild(shareRow);
+          box.appendChild(M.errorRow());
+          box.appendChild(
+            M.buttonRow(
+              "groupTaskConfirm",
+              "group-confirm",
+              "\u0421\u043e\u0437\u0434\u0430\u0442\u044c"
+            )
+          );
+          M.context = { type: "group" };
+          M.open();
+        }
+        static confirm() {
+          const checked = [
+            ...document.querySelectorAll(".group-checkbox:checked"),
+          ].map(cb => parseFloat(cb.getAttribute("data-timer-id")));
+          if (!checked.length) {
+            ModalController.setError(
+              "\u041e\u0442\u043c\u0435\u0442\u044c\u0442\u0435 \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u0438\u043d \u0442\u0430\u0439\u043c\u0435\u0440 \u0433\u0440\u0443\u043f\u043f\u044b"
+            );
+            return;
+          }
+          const name = (
+            document.getElementById("groupTaskName").value || ""
+          ).trim();
+          const share = Utils.parseShareInput(
+            document.getElementById("groupTaskProportion").value
+          );
+          if (!Number.isFinite(share) || share < 0 || share >= 1) {
+            ModalController.setError(
+              "\u0414\u043e\u043b\u044f \u0434\u043e\u043b\u0436\u043d\u0430 \u0431\u044b\u0442\u044c \u0447\u0438\u0441\u043b\u043e\u043c \u043e\u0442 0 \u0434\u043e 1"
+            );
+            return;
+          }
+          ModalController.close();
+          AppController.createTaskInGroup(checked, name, share);
+        }
+      }
+      class SplitController {
+        // «Разбить задачу на подзадачи» (операция 1 py-скрипта) — кнопка на
+        // карточке таймера. Доли нормализуются к сумме 1; вся история
+        // (Факт/Всего/дневные итоги) делится пропорционально долям.
+        static makeRow(name = "", share = "0.5") {
+          const row = ModalController.el("div", {
+            class: "modal-row split-row",
+          });
+          row.appendChild(
+            ModalController.el("input", {
+              type: "text",
+              class: "split-name",
+              placeholder: "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0438",
+              value: name,
+            })
+          );
+          row.appendChild(
+            ModalController.el("input", {
+              type: "text",
+              class: "split-share",
+              placeholder: "\u0414\u043e\u043b\u044f (\u043d\u0430\u043f\u0440. 1/3)",
+              value: share,
+            })
+          );
+          return row;
+        }
+        static openModal(timerId) {
+          const timer = AppState.findTimerById(timerId);
+          if (!timer) return;
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          const parentName = timer.name
+            ? timer.name
+            : "\u0431\u0435\u0437 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044f";
+          box.appendChild(
+            M.el(
+              "div",
+              { class: "modal-title" },
+              `\u0420\u0430\u0437\u0431\u0438\u0442\u044c \u00ab${parentName}\u00bb \u043d\u0430 \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0438`
+            )
+          );
+          const rows = M.el("div", { id: "splitRows" });
+          rows.appendChild(this.makeRow("", "0.5"));
+          rows.appendChild(this.makeRow("", "0.5"));
+          box.appendChild(rows);
+          box.appendChild(
+            M.el(
+              "button",
+              { id: "splitAddRow", "data-modal-action": "split-add-row" },
+              "+ \u041f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0430"
+            )
+          );
+          box.appendChild(
+            M.el(
+              "div",
+              {},
+              "\u0414\u043e\u043b\u0438 \u043d\u043e\u0440\u043c\u0430\u043b\u0438\u0437\u0443\u044e\u0442\u0441\u044f \u043a \u0441\u0443\u043c\u043c\u0435 1. \u0418\u0441\u0442\u043e\u0440\u0438\u044f (\u0424\u0430\u043a\u0442/\u0412\u0441\u0435\u0433\u043e) \u0434\u0435\u043b\u0438\u0442\u0441\u044f \u043f\u0440\u043e\u043f\u043e\u0440\u0446\u0438\u043e\u043d\u0430\u043b\u044c\u043d\u043e."
+            )
+          );
+          box.appendChild(M.errorRow());
+          box.appendChild(
+            M.buttonRow(
+              "splitConfirm",
+              "split-confirm",
+              "\u0420\u0430\u0437\u0431\u0438\u0442\u044c"
+            )
+          );
+          M.context = { type: "split", timerId };
+          M.open();
+        }
+        static addRow() {
+          const rows = document.getElementById("splitRows");
+          if (rows) rows.appendChild(this.makeRow("", ""));
+        }
+        static confirm() {
+          const ctx = ModalController.context;
+          if (!ctx || ctx.type !== "split") return;
+          const timer = AppState.findTimerById(ctx.timerId);
+          if (!timer) {
+            ModalController.close();
+            return;
+          }
+          const rowEls = [
+            ...document.querySelectorAll("#splitRows .split-row"),
+          ];
+          const specs = [];
+          for (const row of rowEls) {
+            const name = (row.querySelector(".split-name").value || "").trim();
+            const share = Utils.parseShareInput(
+              row.querySelector(".split-share").value
+            );
+            if (!name) {
+              ModalController.setError(
+                "\u0423 \u0432\u0441\u0435\u0445 \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447 \u0434\u043e\u043b\u0436\u043d\u044b \u0431\u044b\u0442\u044c \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044f"
+              );
+              return;
+            }
+            if (!Number.isFinite(share) || share <= 0) {
+              ModalController.setError(
+                "\u0414\u043e\u043b\u0438 \u0434\u043e\u043b\u0436\u043d\u044b \u0431\u044b\u0442\u044c \u043f\u043e\u043b\u043e\u0436\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u043c\u0438 (\u043c\u043e\u0436\u043d\u043e \u0434\u0440\u043e\u0431\u044c\u044e: 1/3)"
+              );
+              return;
+            }
+            specs.push({ name, share });
+          }
+          if (specs.length < 2) {
+            ModalController.setError(
+              "\u041d\u0443\u0436\u043d\u043e \u043c\u0438\u043d\u0438\u043c\u0443\u043c \u0434\u0432\u0435 \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0438"
+            );
+            return;
+          }
+          ModalController.close();
+          AppController.splitTimer(ctx.timerId, specs);
+        }
+      }
+      class UIFactory {
+        static createTimeInput(min, max) {
+          const input = document.createElement("input");
+          input.type = "number";
+          input.min = min;
+          input.max = max;
+          input.step = "1";
+          input.style.width = "40px";
+          return input;
+        }
+        static createApplyButton(buttonText, actionType) {
+          const applyButton = document.createElement("button");
+          applyButton.textContent = buttonText;
+          applyButton.setAttribute("data-action", actionType);
+          return applyButton;
+        }
+        static createButton(text, actionType, additionalAttributes = {}) {
+          const button = document.createElement("button");
+          button.textContent = text;
+          button.setAttribute("data-action", actionType);
+          for (const [key, value] of Object.entries(additionalAttributes)) {
+            button.setAttribute(key, value);
+          }
+          return button;
+        }
+        static createInput(type, attributes = {}) {
+          const input = document.createElement("input");
+          input.type = type;
+          for (const [key, value] of Object.entries(attributes)) {
+            if (key === "style") {
+              Object.assign(input.style, value);
+            } else {
+              input.setAttribute(key, value);
+            }
+          }
+          return input;
+        }
+      }
+      class Utils {
+        static formatTime(seconds) {
+          seconds = Math.floor(seconds);
+          // Фикс: отрицательные значения форматируются по модулю со знаком
+          // спереди. Раньше Math.floor по каждому компоненту давал misleading
+          // "-1ч -5м 0с" для переработки в 5 минут (-300с).
+          const sign = seconds < 0 ? "-" : "";
+          const abs = Math.abs(seconds);
+          const hrs = Math.floor(abs / 3600);
+          const mins = Math.floor((abs % 3600) / 60);
+          const secs = abs % 60;
+          return `${sign}${hrs}ч ${mins}м ${secs}с`;
+        }
+        static convertTimeInputsToSeconds(
+          hoursInput,
+          minutesInput,
+          secondsInput
+        ) {
+          const hours = parseInt(hoursInput.value) || 0;
+          const minutes = parseInt(minutesInput.value) || 0;
+          const seconds = parseInt(secondsInput.value) || 0;
+          return hours * 3600 + minutes * 60 + seconds;
+        }
+        static parseTimeInput(input) {
+          return parseFloat(input.replace(",", ".").replace(".", ".")) || 0;
+        }
+        static parseShareInput(value) {
+          // Доля для модальных окон: десятичная (0.25 / 0,25) или обычная
+          // дробь (1/4). Некорректный ввод -> NaN (в отличие от parseTimeInput,
+          // который молча даёт 0 — здесь важно отличать «не ввели» от нуля).
+          const raw = String(value === null || value === undefined ? "" : value)
+            .trim()
+            .replace(",", ".");
+          if (!raw) return NaN;
+          if (raw.includes("/")) {
+            const parts = raw.split("/");
+            if (parts.length !== 2) return NaN;
+            const num = Number(parts[0]);
+            const den = Number(parts[1]);
+            if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) {
+              return NaN;
+            }
+            return num / den;
+          }
+          const n = Number(raw);
+          return Number.isFinite(n) ? n : NaN;
+        }
+        static getTimerIdFromElement(element) {
+          const timerContainer = element.closest(".timer-container");
+          if (timerContainer) {
+            const timerId = timerContainer.id.replace("timer-", "");
+            return parseFloat(timerId);
+          }
+          return null;
+        }
+        static generateId() {
+          return Date.now() + Math.random();
+        }
+      }
+      // ============================================================
+      //  Облачная синхронизация (Supabase).
+      //  Состояние приложения (четыре ключа localStorage: timers,
+      //  globalEndTimeValue, wasTimerActive, lastSessionEndTime) хранится
+      //  одной jsonb-записью в таблице app_state, ключом которой служит
+      //  SHA-256-хэш пользовательского «ключа синхронизации». Доступ —
+      //  через RPC-функции get_state/put_state (см. supabase_setup.sql).
+      //  Сам ключ синхронизации на сервер не передаётся.
+      //  Схема синхронизации: один пользователь, несколько устройств,
+      //  last-write-wins. Пуш — при изменениях (тик, ручное «Сохранить»,
+      //  закрытие вкладки); пул — каждые CLOUD_CONFIG.syncIntervalMs и при
+      //  фокусе вкладки; если облачные данные отличаются и это безопасно,
+      //  они применяются и страница перезагружается.
+      // ============================================================
+      class CloudSync {
+        static LS_KEY_HASH = "cloudKeyHash";
+        static LS_DISABLED = "cloudDisabled";
+        static LS_LAST_SYNC = "cloudLastSyncedAt";
+        static LS_PUSH_HASH = "cloudLastPushedHash";
+        static LS_DEVICE_ID = "cloudDeviceId";
+        static STATE_KEYS = [
+          "timers",
+          "globalEndTimeValue",
+          "wasTimerActive",
+          "lastSessionEndTime",
+        ];
+        static lastError = "";
+        static lastSyncAt = null;
+        static dirty = false;
+        static busy = false;
+        static reloading = false;
+        static periodicTimer = null;
+        static _saveDebounce = null;
+
+        static isConfigured() {
+          return Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.anonKey);
+        }
+        static isDisabled() {
+          return localStorage.getItem(this.LS_DISABLED) === "1";
+        }
+        static setDisabled(value) {
+          if (value) {
+            localStorage.setItem(this.LS_DISABLED, "1");
+          } else {
+            localStorage.removeItem(this.LS_DISABLED);
+          }
+        }
+        static getKeyHash() {
+          return localStorage.getItem(this.LS_KEY_HASH) || "";
+        }
+        static isActive() {
+          return (
+            this.isConfigured() &&
+            !this.isDisabled() &&
+            Boolean(this.getKeyHash())
+          );
+        }
+        static keyFingerprint() {
+          const hash = this.getKeyHash();
+          return hash ? hash.slice(0, 6).toUpperCase() : "";
+        }
+        static deviceId() {
+          let id = localStorage.getItem(this.LS_DEVICE_ID);
+          if (!id) {
+            id = Math.random().toString(36).slice(2, 10);
+            localStorage.setItem(this.LS_DEVICE_ID, id);
+          }
+          return id;
+        }
+
+        // --- Ключ синхронизации -> хэш (ключ записи в базе) ---
+        static async sha256Hex(text) {
+          const bytes = new TextEncoder().encode(text);
+          if (window.crypto && window.crypto.subtle) {
+            const buf = await window.crypto.subtle.digest("SHA-256", bytes);
+            return Array.from(new Uint8Array(buf))
+              .map(b => b.toString(16).padStart(2, "0"))
+              .join("");
+          }
+          // Резерв (file:// без crypto.subtle): FNV-1a в четыре прохода.
+          // Не криптостойко, но для личного инструмента достаточно.
+          let out = "";
+          for (let salt = 0; salt < 4; salt++) {
+            let h = (0x811c9dc5 ^ salt) >>> 0;
+            for (let i = 0; i < bytes.length; i++) {
+              h ^= bytes[i];
+              h = Math.imul(h, 0x01000193) >>> 0;
+            }
+            out += h.toString(16).padStart(8, "0");
+          }
+          return out;
+        }
+        static async setKeyFromPassphrase(passphrase) {
+          const hash = await this.sha256Hex(String(passphrase).trim());
+          localStorage.setItem(this.LS_KEY_HASH, hash);
+          // Под новым ключом ещё ничего не отправляли:
+          localStorage.removeItem(this.LS_PUSH_HASH);
+          this.setDisabled(false);
+          this.lastError = "";
+          return hash;
+        }
+        static clearKey() {
+          [this.LS_KEY_HASH, this.LS_LAST_SYNC, this.LS_PUSH_HASH].forEach(
+            key => localStorage.removeItem(key)
+          );
+        }
+
+        // --- Снимок локального состояния ---
+        static snapshotLocal() {
+          const data = {};
+          this.STATE_KEYS.forEach(key => {
+            data[key] = localStorage.getItem(key);
+          });
+          data.__device = this.deviceId();
+          return data;
+        }
+        static applySnapshot(data) {
+          if (!data || typeof data !== "object") return;
+          this.STATE_KEYS.forEach(key => {
+            const value = data[key];
+            if (value === null || value === undefined) {
+              localStorage.removeItem(key);
+            } else {
+              localStorage.setItem(key, String(value));
+            }
+          });
+        }
+        static quickHash(str) {
+          let h = 0x811c9dc5;
+          for (let i = 0; i < str.length; i++) {
+            h ^= str.charCodeAt(i);
+            h = Math.imul(h, 0x01000193) >>> 0;
+          }
+          return h.toString(16).padStart(8, "0");
+        }
+        static snapshotContentHash(snapshot) {
+          // Хэш без __device: метка устройства не должна влиять на сравнение
+          const copy = { ...snapshot };
+          delete copy.__device;
+          return this.quickHash(JSON.stringify(copy));
+        }
+
+        // --- Сеть (PostgREST RPC) ---
+        static async rpc(fn, args, options = {}) {
+          const base = String(CLOUD_CONFIG.url).replace(/\/+$/, "");
+          const res = await fetch(`${base}/rest/v1/rpc/${fn}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              apikey: CLOUD_CONFIG.anonKey,
+              Authorization: `Bearer ${CLOUD_CONFIG.anonKey}`,
+            },
+            body: JSON.stringify(args),
+            keepalive: Boolean(options.keepalive),
+          });
+          if (!res.ok) {
+            let msg = "";
+            try {
+              msg = (await res.text()).slice(0, 200);
+            } catch (e) {}
+            throw new Error(`${fn}: HTTP ${res.status} ${msg}`);
+          }
+          return res.json();
+        }
+        static cloudGet() {
+          return this.rpc("get_state", { p_key: this.getKeyHash() });
+        }
+        static cloudPut(data, options) {
+          return this.rpc(
+            "put_state",
+            { p_key: this.getKeyHash(), p_data: data },
+            options
+          );
+        }
+
+        // --- Пуш / пул ---
+        static async pushNow(force = false, options = {}) {
+          if (!this.isActive() || this.busy || this.reloading) return false;
+          this.busy = true;
+          try {
+            // Сначала фиксируем модель в localStorage, чтобы снимок отражал
+            // самые свежие данные (например, задачу, созданную только что,
+            // до первого автосохранения — фикс найден E2E-тестом).
+            try {
+              StorageService.saveToLocalStorage();
+            } catch (e) {}
+            const snapshot = this.snapshotLocal();
+            const contentHash = this.snapshotContentHash(snapshot);
+            if (
+              !force &&
+              contentHash === localStorage.getItem(this.LS_PUSH_HASH)
+            ) {
+              this.dirty = false; // не изменилось: не дёргаем updated_at в облаке
+              this.updateCloudButton();
+              return false;
+            }
+            const updatedAt = await this.cloudPut(snapshot, options);
+            localStorage.setItem(this.LS_PUSH_HASH, contentHash);
+            if (updatedAt) {
+              localStorage.setItem(this.LS_LAST_SYNC, String(updatedAt));
+            }
+            this.lastSyncAt = new Date();
+            this.lastError = "";
+            this.dirty = false;
+            this.updateCloudButton();
+            return true;
+          } catch (err) {
+            this.lastError = String((err && err.message) || err);
+            this.updateCloudButton();
+            return false;
+          } finally {
+            this.busy = false;
+          }
+        }
+        static async pullNow(force = false) {
+          // true = облачные данные приняты в localStorage (нужна перезагрузка)
+          if (!this.isActive() || this.busy || this.reloading) return false;
+          this.busy = true;
+          try {
+            const row = await this.cloudGet();
+            this.lastSyncAt = new Date();
+            this.lastError = "";
+            if (!row || !row.data) {
+              this.updateCloudButton();
+              return false; // в облаке пока пусто
+            }
+            if (row.updated_at) {
+              localStorage.setItem(this.LS_LAST_SYNC, String(row.updated_at));
+            }
+            const cloudContent = this.snapshotContentHash(row.data);
+            const localContent = this.snapshotContentHash(this.snapshotLocal());
+            if (cloudContent === localContent) {
+              localStorage.setItem(this.LS_PUSH_HASH, cloudContent);
+              this.dirty = false;
+              this.updateCloudButton();
+              return false;
+            }
+            if (!force && (!this.canAutoApply() || !this.reloadAllowed())) {
+              this.updateCloudButton();
+              return false;
+            }
+            // Защита: пока идёт перезагрузка, тики не должны затереть
+            // принятые данные старой копией из памяти
+            this.reloading = true;
+            this.applySnapshot(row.data);
+            localStorage.setItem(this.LS_PUSH_HASH, cloudContent);
+            this.updateCloudButton();
+            return true;
+          } catch (err) {
+            this.lastError = String((err && err.message) || err);
+            this.updateCloudButton();
+            return false;
+          } finally {
+            this.busy = false;
+          }
+        }
+        static canAutoApply() {
+          // Не подменяем локальное состояние перезагрузкой, пока идёт
+          // трекинг, открыто модальное окно или пользователь печатает в поле.
+          try {
+            if (AppState.getTimers().some(t => t.isTracking)) return false;
+            if (ModalController.isOpen()) return false;
+            const active = document.activeElement;
+            if (active && active.tagName === "INPUT") return false;
+          } catch (e) {}
+          return true;
+        }
+        static reloadAllowed() {
+          // Защита от «шторма перезагрузок»: автоприём не чаще раза в 30 с
+          const last = Number(sessionStorage.getItem("cloudReloadAt") || 0);
+          return Date.now() - last >= 30000;
+        }
+        static reloadForSync(force = false) {
+          if (!force && !this.reloadAllowed()) return;
+          sessionStorage.setItem("cloudReloadAt", String(Date.now()));
+          location.reload();
+        }
+
+        // --- Запуск и фоновая работа ---
+        static async boot() {
+          if (!this.isConfigured() || this.isDisabled()) {
+            this.updateCloudButton();
+            return;
+          }
+          if (!this.getKeyHash()) {
+            CloudController.openKeyModal(true); // первый запуск: спросить ключ
+            return;
+          }
+          const applied = await this.pullNow();
+          if (applied) this.reloadForSync(true);
+          this.updateCloudButton();
+        }
+        static startPeriodic() {
+          if (this.periodicTimer) return;
+          this.periodicTimer = setInterval(
+            () => this.tick(),
+            CLOUD_CONFIG.syncIntervalMs
+          );
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") this.tick();
+          });
+          window.addEventListener("beforeunload", () => {
+            // Последний шанс отправить изменения (keepalive — запрос
+            // доживает после закрытия страницы)
+            if (this.isActive() && this.dirty && !this.reloading) {
+              this.pushNow(false, { keepalive: true });
+            }
+          });
+        }
+        static async tick() {
+          if (!this.isActive() || this.reloading) return;
+          // 1. pushNow сам фиксирует модель в localStorage и отправляет
+          //    снимок, только если были изменения (сравнение хэшей).
+          await this.pushNow();
+          // 2. Тянем из облака; если данные отличаются и безопасно — перезагрузка
+          const applied = await this.pullNow();
+          if (applied) this.reloadForSync();
+        }
+        static onLocalSaved() {
+          if (!this.isActive()) return;
+          const contentHash = this.snapshotContentHash(this.snapshotLocal());
+          this.dirty = contentHash !== localStorage.getItem(this.LS_PUSH_HASH);
+          this.updateCloudButton();
+          // Дебаунс-пуш вскоре после сохранения, не дожидаясь следующего тика
+          if (this.dirty && !this._saveDebounce) {
+            this._saveDebounce = setTimeout(() => {
+              this._saveDebounce = null;
+              this.pushNow();
+            }, 3000);
+          }
+        }
+        static updateCloudButton() {
+          const btn = document.getElementById("cloudButton");
+          if (!btn) return;
+          btn.classList.toggle("has-error", Boolean(this.lastError));
+          btn.classList.toggle(
+            "synced",
+            !this.lastError && !this.dirty && this.isActive()
+          );
+          btn.title = !this.isActive()
+            ? "Облако: не настроено или отключено"
+            : this.lastError
+              ? `Облако: ошибка — ${this.lastError}`
+              : this.dirty
+                ? "Облако: есть неотправленные изменения"
+                : `Облако: синхронизировано (ключ ${this.keyFingerprint()})`;
+        }
+      }
+      class CloudController {
+        // Модальное окно облака: статус, ключ, ручные операции
+        static openModal() {
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          box.appendChild(
+            M.el("div", { class: "modal-title" }, "☁ Облачная синхронизация")
+          );
+          if (!CloudSync.isConfigured()) {
+            box.appendChild(
+              M.el(
+                "div",
+                {},
+                "Облако не настроено. Откройте этот файл в редакторе и впишите в CLOUD_CONFIG (в начале скрипта) Project URL и anon key из Supabase — подробная инструкция в DEPLOY.md."
+              )
+            );
+            const row = M.el("div", { class: "modal-row" });
+            row.appendChild(
+              M.el("button", { "data-modal-action": "cancel" }, "Закрыть")
+            );
+            box.appendChild(row);
+            M.context = { type: "cloud" };
+            M.open();
+            return;
+          }
+          const status = M.el("div", { class: "cloud-status" });
+          status.appendChild(
+            M.el(
+              "div",
+              {},
+              CloudSync.getKeyHash()
+                ? `Ключ синхронизации: задан (отпечаток ${CloudSync.keyFingerprint()} — на всех устройствах должен совпадать)`
+                : "Ключ синхронизации: не задан"
+            )
+          );
+          status.appendChild(
+            M.el(
+              "div",
+              {},
+              `Облако на этом устройстве: ${
+                CloudSync.isDisabled() ? "отключено" : "включено"
+              }`
+            )
+          );
+          const lastSync =
+            CloudSync.lastSyncAt ||
+            localStorage.getItem(CloudSync.LS_LAST_SYNC) ||
+            "—";
+          status.appendChild(
+            M.el(
+              "div",
+              {},
+              `Последняя синхронизация: ${String(lastSync)
+                .replace("T", " ")
+                .slice(0, 19)}`
+            )
+          );
+          box.appendChild(status);
+          box.appendChild(M.errorRow());
+          M.setError(CloudSync.lastError || "");
+          const row1 = M.el("div", { class: "modal-row" });
+          row1.appendChild(
+            M.el(
+              "button",
+              {
+                class: "cloud-action-btn",
+                "data-modal-action": "cloud-sync-now",
+              },
+              "Синхронизировать сейчас"
+            )
+          );
+          row1.appendChild(
+            M.el(
+              "button",
+              {
+                class: "cloud-action-btn",
+                "data-modal-action": "cloud-set-key",
+              },
+              "Задать/сменить ключ"
+            )
+          );
+          box.appendChild(row1);
+          const row2 = M.el("div", { class: "modal-row" });
+          row2.appendChild(
+            M.el(
+              "button",
+              {
+                class: "cloud-action-btn",
+                "data-modal-action": "cloud-force-push",
+              },
+              "Выгрузить в облако"
+            )
+          );
+          row2.appendChild(
+            M.el(
+              "button",
+              {
+                class: "cloud-action-btn",
+                "data-modal-action": "cloud-force-pull",
+              },
+              "Загрузить из облака"
+            )
+          );
+          box.appendChild(row2);
+          const row3 = M.el("div", { class: "modal-row" });
+          row3.appendChild(
+            M.el(
+              "button",
+              {
+                class: "cloud-action-btn",
+                "data-modal-action": "cloud-toggle-disable",
+              },
+              CloudSync.isDisabled()
+                ? "Включить облако"
+                : "Отключить на этом устройстве"
+            )
+          );
+          row3.appendChild(
+            M.el(
+              "button",
+              {
+                class: "cloud-action-btn",
+                "data-modal-action": "cancel",
+              },
+              "Закрыть"
+            )
+          );
+          box.appendChild(row3);
+          M.context = { type: "cloud" };
+          M.open();
+        }
+        static openKeyModal(isFirst) {
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          box.appendChild(
+            M.el(
+              "div",
+              { class: "modal-title" },
+              isFirst
+                ? "Облачная синхронизация — настройка ключа"
+                : "Задать/сменить ключ синхронизации"
+            )
+          );
+          box.appendChild(
+            M.el(
+              "div",
+              {},
+              "Придумайте ключ синхронизации (кодовую фразу, минимум 4 символа) и введите его на всех своих устройствах одинаково. Сам ключ на сервер не уходит — хранится только его хэш, который служит «адресом» вашей записи в облаке."
+            )
+          );
+          const row = M.el("div", { class: "modal-row" });
+          row.appendChild(
+            M.el("input", {
+              type: "password",
+              id: "cloudKeyInput",
+              placeholder: "Ключ синхронизации",
+            })
+          );
+          box.appendChild(row);
+          box.appendChild(M.errorRow());
+          const btnRow = M.el("div", { class: "modal-row" });
+          btnRow.appendChild(
+            M.el(
+              "button",
+              {
+                id: "cloudKeyConfirm",
+                "data-modal-action": "cloud-key-confirm",
+              },
+              "Сохранить и синхронизировать"
+            )
+          );
+          btnRow.appendChild(
+            M.el(
+              "button",
+              { "data-modal-action": isFirst ? "cloud-skip" : "cancel" },
+              isFirst ? "Продолжить без облака" : "Отмена"
+            )
+          );
+          box.appendChild(btnRow);
+          M.context = { type: "cloud-key" };
+          M.open();
+          const input = document.getElementById("cloudKeyInput");
+          if (input) setTimeout(() => input.focus(), 50);
+        }
+        static async handleAction(action) {
+          const M = ModalController;
+          try {
+            if (action === "cloud-set-key") {
+              this.openKeyModal(false);
+              return;
+            }
+            if (action === "cloud-skip") {
+              CloudSync.setDisabled(true);
+              M.close();
+              CloudSync.updateCloudButton();
+              return;
+            }
+            if (action === "cloud-key-confirm") {
+              const input = document.getElementById("cloudKeyInput");
+              const pass = ((input && input.value) || "").trim();
+              if (pass.length < 4) {
+                M.setError("Ключ слишком короткий (минимум 4 символа)");
+                return;
+              }
+              await CloudSync.setKeyFromPassphrase(pass);
+              M.close();
+              // Если в облаке уже есть данные под этим ключом — принимаем их
+              // (и перезагружаемся); иначе выгружаем локальное состояние.
+              const row = await CloudSync.cloudGet();
+              if (row && row.data) {
+                CloudSync.reloading = true;
+                CloudSync.applySnapshot(row.data);
+                localStorage.setItem(
+                  CloudSync.LS_PUSH_HASH,
+                  CloudSync.snapshotContentHash(row.data)
+                );
+                if (row.updated_at) {
+                  localStorage.setItem(
+                    CloudSync.LS_LAST_SYNC,
+                    String(row.updated_at)
+                  );
+                }
+                location.reload();
+              } else {
+                await CloudSync.pushNow(true);
+                this.openModal();
+              }
+              return;
+            }
+            if (action === "cloud-sync-now") {
+              M.close();
+              await CloudSync.pushNow();
+              const applied = await CloudSync.pullNow(true);
+              if (applied) CloudSync.reloadForSync(true);
+              else this.openModal();
+              return;
+            }
+            if (action === "cloud-force-push") {
+              await CloudSync.pushNow(true);
+              this.openModal();
+              return;
+            }
+            if (action === "cloud-force-pull") {
+              M.close();
+              const applied = await CloudSync.pullNow(true);
+              if (applied) CloudSync.reloadForSync(true);
+              else this.openModal();
+              return;
+            }
+            if (action === "cloud-toggle-disable") {
+              if (CloudSync.isDisabled()) {
+                CloudSync.setDisabled(false);
+                if (!CloudSync.getKeyHash()) {
+                  this.openKeyModal(false);
+                  return;
+                }
+              } else {
+                CloudSync.setDisabled(true);
+              }
+              CloudSync.updateCloudButton();
+              this.openModal();
+              return;
+            }
+          } catch (err) {
+            CloudSync.lastError = String((err && err.message) || err);
+            this.openModal();
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
