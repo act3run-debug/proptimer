@@ -200,15 +200,40 @@
         border-color: #4caf50 !important;
         box-shadow: 0 0 8px #4caf50;
       }
+      #tzHolderButton {
+        white-space: nowrap;
+      }
+      #tzHolderButton.tz-holder {
+        border-color: #4caf50;
+        color: #4caf50;
+      }
+      #tzHolderButton.tz-follower {
+        border-color: #ff6b6b;
+        color: #ff6b6b;
+      }
+      #tzHint {
+        color: #888;
+        font-size: 11px;
+        margin-left: 4px;
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
     <div id="globalControls">
       <div id="appTitle">physus</div>
-      <label> Конец: <input type="time" id="globalEndTime" /> </label>
+      <label> Конец: <input type="time" id="globalEndTime" />
+        <span id="tzHint"></span>
+      </label>
       <button data-action="add-timer">+ Добавить таймер</button>
       <button id="awayButton" data-action="toggle-away">Отошёл</button>
-      <button id="saveTimersToLocalStorageManually" data-action="save">
+      <button
+        id="tzHolderButton"
+        data-action="tz-holder"
+        title="Носитель часового пояса"
+      >
+        🕒 Носитель часового пояса
+      </button>      <button id="saveTimersToLocalStorageManually" data-action="save">
         Сохранить
       </button>
       <button id="exportButton" data-action="export">Экспорт</button>
@@ -237,6 +262,8 @@
       //  Впишите Project URL и anon key ниже. Пока они пустые,
       //  приложение работает в чисто локальном режиме (как раньше).
       // ============================================================
+      // Версия приложения — видна в окне облака (контроль деплоя)
+      const APP_VERSION = "2026-10-28-tz1";
       const CLOUD_CONFIG = {
         url: "https://iqvqjiwjizlzronudgui.supabase.co",
         anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
@@ -377,6 +404,8 @@
               AppController.exportTimers();
             } else if (action === "import") {
               AppController.importTimers();
+            } else if (action === "tz-holder") {
+              TimeZoneHolder.claim();
             } else if (action === "cloud") {
               CloudController.openModal();
             }
@@ -458,6 +487,8 @@
           EventService.setupEventDelegation();
           this.setupIntervalUpdates();
           this.setupEventSubscriptions();
+          // Носитель часового пояса: индикация + заявление при отсутствии
+          TimeZoneHolder.ensure();
         }
         static setupIntervalUpdates() {
           setInterval(() => CalculationService.updateCalculations(), 200);
@@ -1059,25 +1090,35 @@
             //    счётчики выводятся из startTime (двойного начисления нет);
             //  - долгое закрытие вкладки — авто-пауза на момент последнего
             //    «сердцебиения» (без фантомных часов), пауза уходит в облако.
-            const heartbeat =
-              Number(this.getItemFromLocalStorage("lastSaveAt")) || 0;
-            const now = Date.now();
-            let autoPaused = false;
-            AppState.getTimers().forEach(timer => {
-              if (!timer.isTracking) return;
-              const gapSec = heartbeat ? (now - heartbeat) / 1000 : Infinity;
-              if (!timer.startTime || !timer.trackingSnapshot || gapSec > 90) {
-                const at =
-                  heartbeat && gapSec !== Infinity
-                    ? new Date(Math.min(heartbeat, now))
-                    : null;
-                TimerModel.pauseAt(timer, at);
-                autoPaused = true;
+            // Авто-пауза применяется ТОЛЬКО к своей сессии (её метки на одних
+            // часах с локальными). Чужая принятая сессия продолжается всегда:
+            // «мёртвого владельца» определит синхронизация по серверной
+            // свежести записи (pull-сторона), а не локальные часы.
+            const owner =
+              this.getItemFromLocalStorage("trackingOwnerDevice") || "";
+            const ownedHere = !owner || owner === CloudSync.deviceId();
+            if (ownedHere) {
+              const heartbeat =
+                Number(this.getItemFromLocalStorage("lastSaveAt")) || 0;
+              const now = Date.now();
+              let autoPaused = false;
+              AppState.getTimers().forEach(timer => {
+                if (!timer.isTracking) return;
+                const gapSec = heartbeat ? (now - heartbeat) / 1000 : Infinity;
+                if (!timer.startTime || !timer.trackingSnapshot || gapSec > 90) {
+                  const at =
+                    heartbeat && gapSec !== Infinity
+                      ? new Date(Math.min(heartbeat, now))
+                      : null;
+                  TimerModel.pauseAt(timer, at);
+                  autoPaused = true;
+                }
+              });
+              if (autoPaused) {
+                CloudSync.clearTrackingOwner();
+                // Секвенция растёт: другие устройства примут авто-паузу
+                CloudSync.bumpControl(false);
               }
-            });
-            if (autoPaused) {
-              // Секвенсия растёт: другие устройства примут авто-паузу
-              CloudSync.bumpControl(false);
             }
           }
           const lastSessionEndTimeStr =
@@ -1376,6 +1417,7 @@
             const now = new Date();
             AppState.setLastUpdateTime(now);
             this.stopTracking(timer);
+            CloudSync.clearTrackingOwner();
             CalculationService.updateCalculations();
           } else {
             if (AppState.isAwayModeActive()) {
@@ -1383,6 +1425,9 @@
             }
             this.stopAllOtherTimers(timers, id);
             this.startTracking(timer);
+            // Устройство, нажавшее «Старт», — владелец сессии: оно шлёт
+            // чекпоинты, а зеркала по владельцу определяют живость трекинга
+            localStorage.setItem("trackingOwnerDevice", CloudSync.deviceId());
             AppState.notify("displayNeedsUpdate");
           }
           // Управляющее действие: немедленно в облако — другие устройства
@@ -1408,6 +1453,7 @@
         }
         static handleGlobalEndTimeInput(e) {
           TimeManager.updateGlobalEndTimeAndPlans(e.target.value, null, true);
+          TimeZoneHolder.updateUI();
           CloudSync.bumpControl();
         }
         static updateDenominator(id, proportion) {
@@ -1884,10 +1930,14 @@
           const now = new Date();
           const globalEndTime = AppState.getGlobalEndTime();
           if (!globalEndTime) {
-            const midnight = new Date(now);
-            midnight.setDate(midnight.getDate() + 1);
-            midnight.setHours(0, 0, 0, 0);
-            return Math.max(0, (midnight - now) / 1000);
+            // «Конец» не задан — до полуночи в зоне носителя часового пояса
+            const midnight = TimeZoneHolder.zonedTimeToEpoch(
+              0,
+              0,
+              TimeZoneHolder.zone(),
+              now.getTime()
+            );
+            return Math.max(0, (midnight - now.getTime()) / 1000);
           }
           if (globalEndTime <= now) {
             const nextDay = new Date(globalEndTime);
@@ -1915,10 +1965,15 @@
           return [hours, minutes];
         }
         static getNextMidnight(now) {
-          const midnight = new Date(now.getTime());
-          midnight.setDate(midnight.getDate() + 1);
-          midnight.setHours(0, 0, 0, 0);
-          return midnight;
+          // Полночь в зоне носителя часового пояса
+          return new Date(
+            TimeZoneHolder.zonedTimeToEpoch(
+              0,
+              0,
+              TimeZoneHolder.zone(),
+              now.getTime()
+            )
+          );
         }
         static createDateWithTime(hours, minutes) {
           const now = new Date();
@@ -1940,9 +1995,16 @@
           return date;
         }
         static createNewGlobalEndTime(hours, minutes) {
-          const { date, now } = this.createDateWithTime(hours, minutes);
-          const newGlobalEndTime = this.adjustDateIfNeeded(date, now);
-          return { newGlobalEndTime, now };
+          const now = new Date();
+          // ЧЧ:ММ трактуется в часовом поясе НОСИТЕЛЯ: абсолютный момент
+          // «Конца» одинаков на всех устройствах независимо от их поясов
+          const epoch = TimeZoneHolder.zonedTimeToEpoch(
+            hours,
+            minutes,
+            TimeZoneHolder.zone(),
+            now.getTime()
+          );
+          return { newGlobalEndTime: new Date(epoch), now };
         }
         static calculateTotalWeight(timers) {
           return timers.reduce((sum, t) => sum + t.proportion, 0);
@@ -2649,9 +2711,25 @@
         static updateGlobalEndTime(now) {
           const globalEndTime = AppState.getGlobalEndTime();
           if (globalEndTime && now >= globalEndTime) {
-            globalEndTime.setDate(globalEndTime.getDate() + 1);
-            AppState.setGlobalEndTime(globalEndTime);
-            AppState.setInitialAvailable((globalEndTime - now) / 1000);
+            // Следующее вхождение «Конца» в зоне носителя (учитывает перевод
+            // часов); если поле пустое — прежнее поведение «+1 сутки»
+            const parsed = TimeCalculator.parseGlobalEndTime(null);
+            let next;
+            if (parsed) {
+              next = new Date(
+                TimeZoneHolder.zonedTimeToEpoch(
+                  parsed[0],
+                  parsed[1],
+                  TimeZoneHolder.zone(),
+                  now.getTime()
+                )
+              );
+            } else {
+              next = new Date(globalEndTime);
+              next.setDate(next.getDate() + 1);
+            }
+            AppState.setGlobalEndTime(next);
+            AppState.setInitialAvailable((next - now) / 1000);
             this.updateGlobalEndTimeAndPlans(null, null, false);
             return true; // произошёл ролловер сессии
           }
@@ -3289,7 +3367,12 @@
           "lastSessionEndTime",
           "lastSaveAt",
           "controlSeq",
+          "trackingOwnerDevice",
+          "tzHolderDevice",
+          "tzHolderZone",
         ];
+        static ABANDON_MS = 150000;
+        static clockSkewMs = 0;
         static lastError = "";
         static _chain = Promise.resolve();
         static lastSyncAt = null;
@@ -3299,6 +3382,7 @@
         static periodicTimer = null;
         static _saveDebounce = null;
         static _interactiveDebounce = null;
+        static _pendingControlRetry = null;
         static rt = null; // Realtime-клиент (Supabase) — мгновенные пинги
         static rtChannel = null;
         static rtReady = false;
@@ -3367,6 +3451,13 @@
         static localSeq() {
           return Number(localStorage.getItem(this.LS_CONTROL_SEQ) || 0);
         }
+        static correctedNow() {
+          // Локальное время с поправкой на расхождение с сервером
+          return Date.now() + this.clockSkewMs;
+        }
+        static clearTrackingOwner() {
+          localStorage.removeItem("trackingOwnerDevice");
+        }
         static bumpControl(push = true) {
           // Управляющее действие (старт/пауза/структура): увеличиваем
           // секвенцию и немедленно отправляем в облако, чтобы другие
@@ -3424,6 +3515,8 @@
             (snapshot && snapshot.globalEndTimeValue) || "",
             (snapshot && snapshot.lastSessionEndTime) || "",
             (snapshot && snapshot.controlSeq) || "0",
+            (snapshot && snapshot.tzHolderDevice) || "",
+            (snapshot && snapshot.tzHolderZone) || "",
           ].join("#");
         }
         static meaningfulHash(snapshot) {
@@ -3486,6 +3579,11 @@
               localStorage.setItem(key, String(value));
             }
           });
+          // Сердцебиение принятого состояния переводим на ЛОКАЛЬНЫЕ часы:
+          // проверка «страница долго была закрыта» не должна зависеть от
+          // расхождения часов устройств (иначе живая чужая сессия на входе
+          // ошибочно сворачивалась в авто-паузу с обнулённым Фактом).
+          localStorage.setItem("lastSaveAt", String(Date.now()));
           // Принятое состояние считаем «уже отправленным»: не слать его
           // обратно и не принимать повторно
           localStorage.setItem(this.LS_PUSH_HASH, this.snapshotContentHash(data));
@@ -3533,6 +3631,18 @@
             } catch (e) {}
             throw new Error(`${fn}: HTTP ${res.status} ${msg}`);
           }
+          // Оценка расхождения часов (для проверки живости владельца):
+          // серверный заголовок Date против локального времени
+          try {
+            const dateHdr =
+              res.headers && res.headers.get ? res.headers.get("date") : null;
+            if (dateHdr) {
+              const serverMs = Date.parse(dateHdr);
+              if (Number.isFinite(serverMs)) {
+                this.clockSkewMs = serverMs - Date.now();
+              }
+            }
+          } catch (e) {}
           return res.json();
         }
         static cloudGet() {
@@ -3573,7 +3683,10 @@
               t => t.isTracking
             );
             const checkpointDue =
-              tracking && Date.now() - this.lastPushAtMs > this.CHECKPOINT_MS;
+              tracking &&
+              (localStorage.getItem("trackingOwnerDevice") || "") ===
+                this.deviceId() &&
+              Date.now() - this.lastPushAtMs > this.CHECKPOINT_MS;
             if (
               !force &&
               meaningful === localStorage.getItem(this.LS_PUSH_PROJ) &&
@@ -3632,6 +3745,46 @@
             }
             const remote = row.data;
             const local = this.snapshotLocal();
+            // «Мёртвый владелец»: зеркалим чужой трекинг, но облачная запись
+            // давно не обновлялась (владелец закрылся, не нажав «Пауза»).
+            // Возраст — по СЕРВЕРНОМУ updated_at с поправкой на часы; свёртка —
+            // по метке владельца (она на одних часах с его startTime).
+            if (!force) {
+              const owner = remote.trackingOwnerDevice || "";
+              const remoteTracking = this.parseSnapshotTimers(remote).some(
+                t => t.isTracking
+              );
+              const localTracking = AppState.getTimers().some(
+                t => t.isTracking
+              );
+              const ageMs = row.updated_at
+                ? this.correctedNow() - Date.parse(row.updated_at)
+                : 0;
+              if (
+                remoteTracking &&
+                localTracking &&
+                owner &&
+                owner !== this.deviceId() &&
+                ageMs > this.ABANDON_MS &&
+                Date.now() - this.lastPushAtMs > this.ABANDON_MS &&
+                this.controlProjection(remote) ===
+                  this.controlProjection(local)
+              ) {
+                const foldMs = Number(remote.lastSaveAt);
+                const foldAt =
+                  Number.isFinite(foldMs) && foldMs > 0
+                    ? new Date(foldMs)
+                    : null;
+                AppState.getTimers().forEach(t => {
+                  if (t.isTracking) TimerModel.pauseAt(t, foldAt);
+                });
+                this.clearTrackingOwner();
+                AppState.notify("displayNeedsUpdate");
+                this.bumpControl(true); // пауза уходит в облако
+                this.updateCloudButton();
+                return false;
+              }
+            }
             const cloudContent = this.snapshotContentHash(remote);
             const localContent = this.snapshotContentHash(local);
             const remoteSeq = Number(remote.controlSeq || 0);
@@ -3670,6 +3823,9 @@
               (!this.canAutoApply(controlNewer) ||
                 !this.reloadAllowed(controlNewer))
             ) {
+              // Чужое управляющее действие отложено (троттлинг/модалка/ввод) —
+              // назначаем быстрый ретрай, а не ждём периодического тика
+              if (controlNewer) this.scheduleControlRetry();
               this.updateCloudButton();
               return false;
             }
@@ -3700,9 +3856,16 @@
         }
         static reloadAllowed(controlNewer = false) {
           // Защита от «шторма перезагрузок»: обычный автоприём не чаще
-          // раза в 30 с; управляющее действие — не чаще раза в 5 с
+          // раза в 30 с; управляющее действие — не чаще раза в 2,5 с
           const last = Number(sessionStorage.getItem("cloudReloadAt") || 0);
-          return Date.now() - last >= (controlNewer ? 5000 : 30000);
+          return Date.now() - last >= (controlNewer ? 2500 : 30000);
+        }
+        static scheduleControlRetry() {
+          if (this._pendingControlRetry) return;
+          this._pendingControlRetry = setTimeout(() => {
+            this._pendingControlRetry = null;
+            if (!this.reloading) this.tick();
+          }, 1500);
         }
         static reloadForSync(force = false) {
           if (!force && !this.reloadAllowed()) return;
@@ -3723,6 +3886,7 @@
           this.initRealtime(); // fire-and-forget
           const applied = await this.pullNow();
           if (applied) this.reloadForSync(true);
+          else TimeZoneHolder.ensure(); // носитель есть всегда
           this.updateCloudButton();
         }
         static startPeriodic() {
@@ -3911,6 +4075,153 @@
                 : `Облако: синхронизировано (ключ ${this.keyFingerprint()})`;
         }
       }
+      // ============================================================
+      //  Носитель часового пояса — единый источник истины для трактовки
+      //  «Конца» (ЧЧ:ММ) на всех устройствах. Все устройства трактуют
+      //  синхронизированное время в зоне носителя, поэтому «Осталось»,
+      //  «План» и суточный сброс у всех идентичны. Кнопка носителя зелёная
+      //  у владельца и красная у остальных; клик — мгновенный перехват
+      //  (управляющее действие: push + Realtime-пинг). Правка «Конца»
+      //  носителя НЕ меняет: значение всегда трактуется в зоне носителя.
+      // ============================================================
+      class TimeZoneHolder {
+        static LS_DEVICE = "tzHolderDevice";
+        static LS_ZONE = "tzHolderZone";
+        static localZone() {
+          try {
+            return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+          } catch (e) {
+            return "UTC";
+          }
+        }
+        static zone() {
+          // Зона носителя; пока носителя нет (локальный режим) — своя зона
+          return localStorage.getItem(this.LS_ZONE) || this.localZone();
+        }
+        static holderDevice() {
+          return localStorage.getItem(this.LS_DEVICE) || "";
+        }
+        static isHolder() {
+          const d = this.holderDevice();
+          return !d || d === CloudSync.deviceId();
+        }
+        static zoneOffsetMs(zone, atMs) {
+          // Смещение зоны от UTC в данный момент (учитывает летнее время)
+          const dtf = new Intl.DateTimeFormat("en-US", {
+            timeZone: zone,
+            hour12: false,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+          const parts = {};
+          for (const part of dtf.formatToParts(new Date(atMs))) {
+            parts[part.type] = part.value;
+          }
+          const asUTC = Date.UTC(
+            Number(parts.year),
+            Number(parts.month) - 1,
+            Number(parts.day),
+            Number(parts.hour) % 24,
+            Number(parts.minute),
+            Number(parts.second)
+          );
+          return asUTC - Math.floor(atMs / 1000) * 1000;
+        }
+        static zonedTimeToEpoch(hours, minutes, zone, fromMs) {
+          // Ближайшее (строго после fromMs) вхождение hours:minutes в зоне.
+          // Двухпроходный расчёт: первое приближение уточняется смещением
+          // в полученной точке (корректно на границах летнего времени).
+          const dtf = new Intl.DateTimeFormat("en-US", {
+            timeZone: zone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          });
+          const parts = {};
+          for (const part of dtf.formatToParts(new Date(fromMs))) {
+            parts[part.type] = part.value;
+          }
+          const y = Number(parts.year);
+          const mo = Number(parts.month) - 1;
+          const d = Number(parts.day);
+          const resolve = day => {
+            const guess = Date.UTC(y, mo, day, hours, minutes);
+            let epoch = guess - this.zoneOffsetMs(zone, guess);
+            epoch = guess - this.zoneOffsetMs(zone, epoch);
+            return epoch;
+          };
+          let epoch = resolve(d);
+          if (epoch <= fromMs) epoch = resolve(d + 1);
+          return epoch;
+        }
+        static formatHHMM(epochMs, zone) {
+          try {
+            return new Intl.DateTimeFormat("ru-RU", {
+              timeZone: zone,
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }).format(new Date(epochMs));
+          } catch (e) {
+            return "";
+          }
+        }
+        static claim(recalc = true) {
+          // Перехват носительства: мгновенная рассылка всем устройствам
+          localStorage.setItem(this.LS_DEVICE, CloudSync.deviceId());
+          localStorage.setItem(this.LS_ZONE, this.localZone());
+          if (recalc && AppState.getGlobalEndTimeFromUI()) {
+            // Планы пересчитываются от новой трактовки «Конца»
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, true);
+          }
+          this.updateUI();
+          CloudSync.bumpControl();
+        }
+        static ensure() {
+          // Носитель есть всегда: если в состоянии его нет — заявляем себя
+          if (CloudSync.isActive() && !this.holderDevice()) {
+            this.claim(false);
+          }
+          this.updateUI();
+        }
+        static updateUI() {
+          const btn = document.getElementById("tzHolderButton");
+          const iAm = this.isHolder();
+          const zone = this.zone();
+          if (btn) {
+            btn.classList.toggle("tz-holder", iAm);
+            btn.classList.toggle("tz-follower", !iAm);
+            btn.title = iAm
+              ? `Вы — носитель часового пояса (${zone}). «Конец» трактуется в вашем поясе. Клик на другом устройстве передаст носительство.`
+              : `Носитель — другое устройство (${zone}); «Конец» трактуется по его времени. Нажмите, чтобы перехватить.`;
+          }
+          const hint = document.getElementById("tzHint");
+          if (hint) {
+            const value = AppState.getGlobalEndTimeFromUI();
+            const m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(value || "");
+            if (m) {
+              const epoch = this.zonedTimeToEpoch(
+                Number(m[1]),
+                Number(m[2]),
+                zone,
+                Date.now()
+              );
+              hint.textContent = iAm
+                ? `ваш пояс: ${zone}`
+                : `по поясу носителя (${zone}); у вас: ${this.formatHHMM(
+                    epoch,
+                    this.localZone()
+                  )}`;
+            } else {
+              hint.textContent = iAm ? "" : `пояс носителя: ${zone}`;
+            }
+          }
+        }
+      }
       class CloudController {
         // Модальное окно облака: статус, ключ, ручные операции
         static openModal() {
@@ -3965,6 +4276,9 @@
               {},
               `Последняя синхронизация: ${CloudSync.formatSyncTime(lastSync)}`
             )
+          );
+          status.appendChild(
+            M.el("div", {}, `Версия приложения: ${APP_VERSION}`)
           );
           box.appendChild(status);
           box.appendChild(M.errorRow());
@@ -4134,6 +4448,7 @@
                 }
                 location.reload();
               } else {
+                TimeZoneHolder.ensure(); // первый запуск: заявить носителя
                 await CloudSync.pushNow(true);
                 this.openModal();
               }
