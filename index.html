@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html>
   <head>
@@ -411,6 +409,10 @@
             timer.dailyTrackedSeconds = 0;
             timer.trackedSeconds = 0;
             timer.lastResetTime = new Date();
+            if (timer.isTracking) {
+              // Идёт отсчёт — новая сессия продолжает его с нуля
+              TimerModel.rebaseTracking(timer);
+            }
           });
           this.isJustAfterReset = true;
           AppState.setNeedsReset(false);
@@ -487,6 +489,7 @@
               TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
             }
             CalculationService.updateCalculations();
+            CloudSync.bumpControl();
             return newTimer;
           }
           // «Добавить ко всем» — механика add_task_to_group из py-скрипта,
@@ -545,6 +548,7 @@
           }
           CalculationService.updateCalculations();
           this.autoUpdate();
+          CloudSync.bumpControl();
           return newTimer;
         }
         static splitTimer(timerId, specs) {
@@ -584,6 +588,7 @@
               remainingSeconds: 0,
               isTracking: false,
               startTime: null,
+              trackingSnapshot: null,
               lastResetTime: new Date(),
               shouldUpdateProportion: false,
               splitShare: share,
@@ -604,6 +609,7 @@
           }
           CalculationService.updateCalculations();
           this.autoUpdate();
+          CloudSync.bumpControl();
           return children;
         }
         static toggleTracking(id) {
@@ -620,6 +626,8 @@
         }
         static toggleAway() {
           TimeManager.toggleAway();
+          // «Отошёл» останавливает трекинг — это управляющее действие
+          CloudSync.bumpControl();
         }
         static calculateRecommendations() {
           SessionManager.checkAndPerformReset();
@@ -664,6 +672,8 @@
           //  - получение/потеря фокуса поля ввода;
           //  - наступление «Конца» (ролловер сессии).
           SessionManager.checkAndPerformReset();
+          // Пользовательское действие (клик/фокус) — немедленная синхронизация
+          CloudSync.interactiveSync();
           if (AppState.isAwayModeActive()) {
             // В режиме «Отошёл» распределение заморожено: планы уменьшает
             // handleAwayMode, а пересчёт от настенного времени стёр бы
@@ -920,6 +930,8 @@
             "lastSessionEndTime",
             lastSessionEndTime ? lastSessionEndTime.getTime().toString() : ""
           );
+          // «Сердцебиение» для авто-паузы: момент последнего сохранения
+          this.setItemToLocalStorage("lastSaveAt", String(Date.now()));
           // Облако: локальное состояние обновилось — pushNow отправит
           // его, только если содержимое действительно изменилось.
           CloudSync.onLocalSaved();
@@ -1022,6 +1034,11 @@
               : Number(lsd);
           timer.isTracking = raw.isTracking === true;
           timer.startTime = this.storageDateOrNull(raw.startTime);
+          const snap = raw.trackingSnapshot;
+          timer.trackingSnapshot =
+            snap !== null && typeof snap === "object" && !Array.isArray(snap)
+              ? snap
+              : null;
           const resetDate = this.storageDateOrNull(raw.lastResetTime);
           timer.lastResetTime = resetDate ? resetDate : new Date();
           return timer;
@@ -1037,9 +1054,31 @@
           AppState.setTimers(loadedTimers);
           const wasTimerActive = this.getItemFromLocalStorage("wasTimerActive");
           if (wasTimerActive === "true") {
+            // Зеркалируемый трекинг переживает перезагрузку:
+            //  - короткая (<90 с от последнего сохранения) — отсчёт продолжается,
+            //    счётчики выводятся из startTime (двойного начисления нет);
+            //  - долгое закрытие вкладки — авто-пауза на момент последнего
+            //    «сердцебиения» (без фантомных часов), пауза уходит в облако.
+            const heartbeat =
+              Number(this.getItemFromLocalStorage("lastSaveAt")) || 0;
+            const now = Date.now();
+            let autoPaused = false;
             AppState.getTimers().forEach(timer => {
-              timer.isTracking = false;
+              if (!timer.isTracking) return;
+              const gapSec = heartbeat ? (now - heartbeat) / 1000 : Infinity;
+              if (!timer.startTime || !timer.trackingSnapshot || gapSec > 90) {
+                const at =
+                  heartbeat && gapSec !== Infinity
+                    ? new Date(Math.min(heartbeat, now))
+                    : null;
+                TimerModel.pauseAt(timer, at);
+                autoPaused = true;
+              }
             });
+            if (autoPaused) {
+              // Секвенсия растёт: другие устройства примут авто-паузу
+              CloudSync.bumpControl(false);
+            }
           }
           const lastSessionEndTimeStr =
             this.getItemFromLocalStorage("lastSessionEndTime");
@@ -1160,6 +1199,8 @@
                   timer.isTracking = false;
                 });
                 this.saveToLocalStorage();
+                // Импорт — крупное структурное изменение: немедленно в облако
+                CloudSync.bumpControl();
                 CalculationService.updateCalculations();
               } catch (error) {
                 alert("Ошибка при импорте файла: " + error.message);
@@ -1244,6 +1285,8 @@
           const timer = AppState.findTimerById(timerId);
           if (timer) {
             TimerModel.setName(timer, input.value);
+            // Осмысленное изменение — доставить другим устройствам сразу
+            CloudSync.interactiveSync();
           }
         }
         static handleProportionChange(input, timerId) {
@@ -1255,6 +1298,8 @@
           if (timer) {
             TimerModel.setTargetProportion(timer, input.value);
             AppController.calculateRecommendations();
+            // Цель влияет на рекомендации всех устройств — разослать немедленно
+            CloudSync.bumpControl();
           }
         }
         static handleTrackedApplyButtonClick(timerId) {
@@ -1315,6 +1360,7 @@
                 seconds
               );
               TimerModel.setTimerValue(timer, "totalTrackedSeconds", 0);
+              TimerModel.rebaseTracking(timer);
               AppState.setLastUpdateTime(new Date());
               this.updateTimerAfterApply();
             }
@@ -1328,7 +1374,6 @@
           if (!timer) return;
           if (timer.isTracking) {
             const now = new Date();
-            const delta = (now - AppState.getLastUpdateTime()) / 1000;
             AppState.setLastUpdateTime(now);
             this.stopTracking(timer);
             CalculationService.updateCalculations();
@@ -1340,6 +1385,9 @@
             this.startTracking(timer);
             AppState.notify("displayNeedsUpdate");
           }
+          // Управляющее действие: немедленно в облако — другие устройства
+          // примут старт/паузу в течение своего интервала синхронизации
+          CloudSync.bumpControl();
         }
         static stopTracking(timer) {
           TimerModel.stopTracking(timer);
@@ -1360,6 +1408,7 @@
         }
         static handleGlobalEndTimeInput(e) {
           TimeManager.updateGlobalEndTimeAndPlans(e.target.value, null, true);
+          CloudSync.bumpControl();
         }
         static updateDenominator(id, proportion) {
           SessionManager.checkAndPerformReset();
@@ -1377,16 +1426,21 @@
               TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
             }
             CalculationService.updateCalculations();
+            // Вес влияет на планы всех устройств — разослать немедленно
+            CloudSync.bumpControl();
           }
         }
         static resetTimer(timer) {
           SessionManager.clearJustAfterResetFlag();
           TimerModel.resetTimer(timer);
+          TimerModel.rebaseTracking(timer);
+          CloudSync.bumpControl();
           AppState.notify("timerUpdated", timer);
           AppState.notify("displayNeedsUpdate");
         }
         static deleteTimer(timer) {
           SessionManager.clearJustAfterResetFlag();
+          CloudSync.bumpControl();
           AppState.removeTimer(timer.id);
           // Семантика из py-скрипта (remove_tasks): веса и цели оставшихся
           // задач ренормализуются к сумме 1. Время НЕ перераспределяется.
@@ -1410,6 +1464,7 @@
           AppController.autoUpdate();
         }
         static updateTimer(timer) {
+          CloudSync.bumpControl();
           if (AppState.getGlobalEndTime()) {
             TimeManager.updateGlobalEndTimeAndPlans(null, timer.id, false);
           } else {
@@ -1449,6 +1504,8 @@
           AppState.notify("timerUpdated", timer);
         }
         static updateTimerAfterApply() {
+          // Ручная правка счётчиков — сразу в облако
+          CloudSync.bumpControl();
           TimerView.updateAllTimerProportions();
           CalculationService.updateCalculations();
           AppController.calculateRecommendations();
@@ -1466,6 +1523,7 @@
             trackedSeconds: 0,
             isTracking: false,
             startTime: null,
+            trackingSnapshot: null,
             plannedSeconds: 0,
             baseAllocation: 0,
             totalDuration: 0,
@@ -1530,12 +1588,86 @@
         static startTracking(timer) {
           timer.isTracking = true;
           timer.startTime = new Date();
+          // Снимок счётчиков на момент старта: факт выводится как
+          // «снимок + (сейчас − startTime)», поэтому любое устройство
+          // получает одинаковые значения (зеркалирование без двойного счёта).
+          timer.trackingSnapshot = this.captureSnapshot(timer);
+        }
+        static captureSnapshot(timer) {
+          return {
+            trackedSeconds: timer.trackedSeconds || 0,
+            totalTrackedSeconds: timer.totalTrackedSeconds || 0,
+            totalDuration: timer.totalDuration || 0,
+            dailyTrackedSeconds: timer.dailyTrackedSeconds || 0,
+            totalSeconds: timer.totalSeconds || 0,
+            dailyTotalSeconds: timer.dailyTotalSeconds || 0,
+            lifetimeTotalSeconds: timer.lifetimeTotalSeconds || 0,
+            originalDailyTotalSeconds: timer.originalDailyTotalSeconds || 0,
+          };
+        }
+        static rebaseTracking(timer) {
+          // После ручной правки счётчиков во время трекинга — вывод
+          // продолжается от новых значений
+          if (timer.isTracking) {
+            timer.startTime = new Date();
+            timer.trackingSnapshot = this.captureSnapshot(timer);
+          }
         }
         static stopTracking(timer) {
+          // Точная фиксация накопленного перед остановкой
+          this.syncTrackedFromClock(timer, new Date());
           timer.startTime = null;
           timer.isTracking = false;
+          timer.trackingSnapshot = null;
+        }
+        static pauseAt(timer, when) {
+          // Авто-пауза «задним числом» (долгое закрытие вкладки):
+          // счётчики выводятся до момента when, а не до текущего.
+          if (when && timer.startTime && timer.trackingSnapshot) {
+            this.syncTrackedFromClock(timer, when);
+          }
+          timer.isTracking = false;
+          timer.startTime = null;
+          timer.trackingSnapshot = null;
+        }
+        static syncTrackedFromClock(timer, now) {
+          // Идемпотентный вывод всех счётчиков из startTime + снимка.
+          // Кто бы ни считал (это устройство или другое после синхронизации),
+          // результат сходится к одному значению.
+          if (!timer.isTracking || !timer.startTime || !timer.trackingSnapshot) {
+            return false;
+          }
+          const snap = timer.trackingSnapshot;
+          const elapsed = Math.max(0, (now - timer.startTime) / 1000);
+          timer.trackedSeconds = (snap.trackedSeconds || 0) + elapsed;
+          timer.totalTrackedSeconds = (snap.totalTrackedSeconds || 0) + elapsed;
+          timer.totalDuration = (snap.totalDuration || 0) + elapsed;
+          timer.dailyTrackedSeconds = (snap.dailyTrackedSeconds || 0) + elapsed;
+          timer.totalSeconds = (snap.totalSeconds || 0) + elapsed;
+          const derivedDaily = (snap.dailyTotalSeconds || 0) + elapsed;
+          timer.dailyTotalSeconds = derivedDaily;
+          timer.lifetimeTotalSeconds = (snap.lifetimeTotalSeconds || 0) + elapsed;
+          timer.originalDailyTotalSeconds = Math.max(
+            snap.originalDailyTotalSeconds || 0,
+            derivedDaily
+          );
+          return true;
         }
         static updateTrackedTime(timer, delta) {
+          if (timer.isTracking && timer.trackingSnapshot) {
+            // Ручная коррекция во время трекинга: сдвигаем снимок,
+            // вывод счётчиков продолжается от скорректированных значений
+            const snap = timer.trackingSnapshot;
+            snap.trackedSeconds = (snap.trackedSeconds || 0) + delta;
+            snap.totalTrackedSeconds = (snap.totalTrackedSeconds || 0) + delta;
+            snap.totalDuration = (snap.totalDuration || 0) + delta;
+            snap.dailyTrackedSeconds = (snap.dailyTrackedSeconds || 0) + delta;
+            snap.totalSeconds = (snap.totalSeconds || 0) + delta;
+            snap.dailyTotalSeconds = (snap.dailyTotalSeconds || 0) + delta;
+            snap.lifetimeTotalSeconds = (snap.lifetimeTotalSeconds || 0) + delta;
+            this.syncTrackedFromClock(timer, new Date());
+            return;
+          }
           timer.totalTrackedSeconds = (timer.totalTrackedSeconds || 0) + delta;
           timer.totalDuration += delta;
           timer.trackedSeconds += delta;
@@ -1880,8 +2012,9 @@
             t.lifetimeTotalSeconds = t.lifetimeTotalSeconds || 0;
             if (t.isTracking && t.startTime && !AppState.isAwayModeActive()) {
               const now = new Date();
-              const actualDelta = (now - t.startTime) / 1000;
-              TimerModel.updateTrackedTime(t, delta);
+              // Зеркалируемый трекинг: счётчики выводятся из startTime +
+              // снимка (сходятся на всех устройствах), а не копят дельты
+              TimerModel.syncTrackedFromClock(t, now);
               updatedTimers.push(t);
               if (
                 t.trackedSeconds >= t.plannedSeconds &&
@@ -3144,21 +3277,44 @@
         static LS_DISABLED = "cloudDisabled";
         static LS_LAST_SYNC = "cloudLastSyncedAt";
         static LS_PUSH_HASH = "cloudLastPushedHash";
+        static LS_PUSH_PROJ = "cloudLastPushedProj";
+        static CHECKPOINT_MS = 60000; // чекпоинт счётчиков во время трекинга
+        static lastPushAtMs = 0;
         static LS_DEVICE_ID = "cloudDeviceId";
+        static LS_CONTROL_SEQ = "controlSeq";
         static STATE_KEYS = [
           "timers",
           "globalEndTimeValue",
           "wasTimerActive",
           "lastSessionEndTime",
+          "lastSaveAt",
+          "controlSeq",
         ];
         static lastError = "";
+        static _chain = Promise.resolve();
         static lastSyncAt = null;
         static dirty = false;
         static busy = false;
         static reloading = false;
         static periodicTimer = null;
         static _saveDebounce = null;
+        static _interactiveDebounce = null;
+        static rt = null; // Realtime-клиент (Supabase) — мгновенные пинги
+        static rtChannel = null;
+        static rtReady = false;
+        static rtFailed = false;
+        static rtRetryAt = 0;
+        static lastActivityAt = 0;
 
+        static enqueue(fn) {
+          // Последовательное выполнение push/pull: без гонок и потерь
+          const run = this._chain.then(fn, fn);
+          this._chain = run.then(
+            () => {},
+            () => {}
+          );
+          return run;
+        }
         static isConfigured() {
           return Boolean(CLOUD_CONFIG.url && CLOUD_CONFIG.anonKey);
         }
@@ -3168,6 +3324,7 @@
         static setDisabled(value) {
           if (value) {
             localStorage.setItem(this.LS_DISABLED, "1");
+            this.teardownRealtime();
           } else {
             localStorage.removeItem(this.LS_DISABLED);
           }
@@ -3186,6 +3343,17 @@
           const hash = this.getKeyHash();
           return hash ? hash.slice(0, 6).toUpperCase() : "";
         }
+        static formatSyncTime(value) {
+          // Единый формат для Date-объекта и ISO-строки из localStorage
+          if (!value) return "—";
+          const d = value instanceof Date ? value : new Date(value);
+          if (isNaN(d.getTime())) return String(value).slice(0, 19);
+          const p = n => String(n).padStart(2, "0");
+          return (
+            `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+            `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+          );
+        }
         static deviceId() {
           let id = localStorage.getItem(this.LS_DEVICE_ID);
           if (!id) {
@@ -3193,6 +3361,73 @@
             localStorage.setItem(this.LS_DEVICE_ID, id);
           }
           return id;
+        }
+
+        // --- Зеркалирование управления (мультиселевенная секвенция) ---
+        static localSeq() {
+          return Number(localStorage.getItem(this.LS_CONTROL_SEQ) || 0);
+        }
+        static bumpControl(push = true) {
+          // Управляющее действие (старт/пауза/структура): увеличиваем
+          // секвенцию и немедленно отправляем в облако, чтобы другие
+          // устройства приняли изменение безусловно.
+          if (!this.isConfigured()) return this.localSeq();
+          const seq = this.localSeq() + 1;
+          localStorage.setItem(this.LS_CONTROL_SEQ, String(seq));
+          this.lastActivityAt = Date.now();
+          try {
+            StorageService.saveToLocalStorage();
+          } catch (e) {}
+          if (push) this.pushNow(true);
+          return seq;
+        }
+        static parseSnapshotTimers(snapshot) {
+          try {
+            const arr = JSON.parse((snapshot && snapshot.timers) || "[]");
+            return Array.isArray(arr) ? arr : [];
+          } catch (e) {
+            return [];
+          }
+        }
+        static controlProjection(snapshot) {
+          // Состояние управления: кто трекается и с каким startTime.
+          // Счётчики сюда не входят — во время трекинга они выводятся
+          // из startTime и на каждом устройстве чуть «шумят».
+          return this.parseSnapshotTimers(snapshot)
+            .map(
+              t =>
+                `${t.id}:${t.isTracking === true}:${t.startTime || 0}`
+            )
+            .sort()
+            .join("|");
+        }
+        static meaningfulProjection(snapshot) {
+          // «Осмысленное» состояние: структура списка, имена, веса, цели,
+          // управление и глобальные ключи. Производные значения (счётчики,
+          // планы, рекомендации) не входят — каждое устройство вычисляет
+          // их одинаково самостоятельно, их отличия не повод для рассылки.
+          const timers = this.parseSnapshotTimers(snapshot)
+            .map(t =>
+              [
+                t.id,
+                t.name || "",
+                t.proportion,
+                t.targetProportion,
+                t.isTracking === true,
+                t.startTime || 0,
+              ].join(":")
+            )
+            .sort()
+            .join("|");
+          return [
+            timers,
+            (snapshot && snapshot.globalEndTimeValue) || "",
+            (snapshot && snapshot.lastSessionEndTime) || "",
+            (snapshot && snapshot.controlSeq) || "0",
+          ].join("#");
+        }
+        static meaningfulHash(snapshot) {
+          return this.quickHash(this.meaningfulProjection(snapshot));
         }
 
         // --- Ключ синхронизации -> хэш (ключ записи в базе) ---
@@ -3251,6 +3486,11 @@
               localStorage.setItem(key, String(value));
             }
           });
+          // Принятое состояние считаем «уже отправленным»: не слать его
+          // обратно и не принимать повторно
+          localStorage.setItem(this.LS_PUSH_HASH, this.snapshotContentHash(data));
+          localStorage.setItem(this.LS_PUSH_PROJ, this.meaningfulHash(data));
+          this.lastPushAtMs = Date.now();
         }
         static quickHash(str) {
           let h = 0x811c9dc5;
@@ -3261,9 +3501,15 @@
           return h.toString(16).padStart(8, "0");
         }
         static snapshotContentHash(snapshot) {
-          // Хэш без __device: метка устройства не должна влиять на сравнение
-          const copy = { ...snapshot };
-          delete copy.__device;
+          // Нормализованный хэш значимых полей: отсутствие ключа и null
+          // считаются равными (облачная запись может быть старого формата),
+          // __device и lastSaveAt (летучие поля) в сравнении не участвуют.
+          const copy = {};
+          this.STATE_KEYS.forEach(key => {
+            if (key === "lastSaveAt") return;
+            const value = snapshot ? snapshot[key] : null;
+            copy[key] = value === undefined || value === null ? null : String(value);
+          });
           return this.quickHash(JSON.stringify(copy));
         }
 
@@ -3301,9 +3547,14 @@
         }
 
         // --- Пуш / пул ---
-        static async pushNow(force = false, options = {}) {
-          if (!this.isActive() || this.busy || this.reloading) return false;
-          this.busy = true;
+        static pushNow(force = false, options = {}) {
+          // Операции синхронизации сериализуются через цепочку: быстрый
+          // повторный вызов (два управляющих действия подряд) не теряется,
+          // а выполняется следующим.
+          return this.enqueue(() => this._pushNow(force, options));
+        }
+        static async _pushNow(force = false, options = {}) {
+          if (!this.isActive() || this.reloading) return false;
           try {
             // Сначала фиксируем модель в localStorage, чтобы снимок отражал
             // самые свежие данные (например, задачу, созданную только что,
@@ -3313,9 +3564,20 @@
             } catch (e) {}
             const snapshot = this.snapshotLocal();
             const contentHash = this.snapshotContentHash(snapshot);
+            const meaningful = this.meaningfulHash(snapshot);
+            // Отправляем только ОСМЫСЛЕННЫЕ изменения (структура/имена/веса/
+            // цели/управление). Шум счётчиков во время трекинга не уходит:
+            // вторые устройства выводят их из startTime сами. Раз в минуту —
+            // контрольная точка полным снимком (устойчивость к сбоям).
+            const tracking = this.parseSnapshotTimers(snapshot).some(
+              t => t.isTracking
+            );
+            const checkpointDue =
+              tracking && Date.now() - this.lastPushAtMs > this.CHECKPOINT_MS;
             if (
               !force &&
-              contentHash === localStorage.getItem(this.LS_PUSH_HASH)
+              meaningful === localStorage.getItem(this.LS_PUSH_PROJ) &&
+              !checkpointDue
             ) {
               this.dirty = false; // не изменилось: не дёргаем updated_at в облаке
               this.updateCloudButton();
@@ -3323,26 +3585,40 @@
             }
             const updatedAt = await this.cloudPut(snapshot, options);
             localStorage.setItem(this.LS_PUSH_HASH, contentHash);
+            localStorage.setItem(this.LS_PUSH_PROJ, meaningful);
+            this.lastPushAtMs = Date.now();
             if (updatedAt) {
               localStorage.setItem(this.LS_LAST_SYNC, String(updatedAt));
             }
             this.lastSyncAt = new Date();
             this.lastError = "";
             this.dirty = false;
+            this.lastActivityAt = Date.now();
+            this.broadcastPing(); // мгновенно будим другие устройства
             this.updateCloudButton();
             return true;
           } catch (err) {
             this.lastError = String((err && err.message) || err);
             this.updateCloudButton();
             return false;
-          } finally {
-            this.busy = false;
           }
         }
-        static async pullNow(force = false) {
-          // true = облачные данные приняты в localStorage (нужна перезагрузка)
-          if (!this.isActive() || this.busy || this.reloading) return false;
-          this.busy = true;
+        static pullNow(force = false) {
+          return this.enqueue(() => this._pullNow(force));
+        }
+        static async _pullNow(force = false) {
+          // true = облачные данные приняты в localStorage (нужна перезагрузка).
+          // Правила принятия (зеркалирование управления):
+          //  - remoteSeq > localSeq: с другого устройства пришло управляющее
+          //    действие (старт/пауза/структура) — принимаем безусловно,
+          //    даже если у самих идёт трекинг;
+          //  - remoteSeq == localSeq, управление совпадает, идёт трекинг:
+          //    отличия счётчиков — «шум» параллельного вывода — игнорируем;
+          //  - remoteSeq == localSeq, никто не трекается: принимаем при любом
+          //    отличии содержимого (ручные правки, веса, история);
+          //  - remoteSeq < localSeq или расхождение управления при равных seq:
+          //    локальное состояние новее — не принимаем (наш push победит).
+          if (!this.isActive() || this.reloading) return false;
           try {
             const row = await this.cloudGet();
             this.lastSyncAt = new Date();
@@ -3354,22 +3630,53 @@
             if (row.updated_at) {
               localStorage.setItem(this.LS_LAST_SYNC, String(row.updated_at));
             }
-            const cloudContent = this.snapshotContentHash(row.data);
-            const localContent = this.snapshotContentHash(this.snapshotLocal());
+            const remote = row.data;
+            const local = this.snapshotLocal();
+            const cloudContent = this.snapshotContentHash(remote);
+            const localContent = this.snapshotContentHash(local);
+            const remoteSeq = Number(remote.controlSeq || 0);
+            const localSeq = this.localSeq();
+            let adopt = false;
+            let controlNewer = false;
             if (cloudContent === localContent) {
-              localStorage.setItem(this.LS_PUSH_HASH, cloudContent);
-              this.dirty = false;
+              adopt = false;
+            } else if (force) {
+              adopt = true;
+            } else if (remoteSeq > localSeq) {
+              adopt = true;
+              controlNewer = true;
+            } else if (remoteSeq === localSeq) {
+              // Принимаем только ОСМЫСЛЕННЫЕ отличия (структура/имена/веса/
+              // цели) и только если облачная запись — не эхо нашего
+              // последнего пуша (иначе старая копия откатила бы локальную
+              // правку, которую мы ещё не отправили). Шум счётчиков/планов
+              // поводом не является: устройства сходятся к нему сами.
+              const meaningfulDiffers =
+                this.meaningfulHash(remote) !== this.meaningfulHash(local);
+              const foreign =
+                cloudContent !== localStorage.getItem(this.LS_PUSH_HASH);
+              adopt = meaningfulDiffers && foreign;
+            }
+            if (!adopt) {
+              if (cloudContent === localContent) {
+                localStorage.setItem(this.LS_PUSH_HASH, cloudContent);
+                this.dirty = false;
+              }
               this.updateCloudButton();
               return false;
             }
-            if (!force && (!this.canAutoApply() || !this.reloadAllowed())) {
+            if (
+              !force &&
+              (!this.canAutoApply(controlNewer) ||
+                !this.reloadAllowed(controlNewer))
+            ) {
               this.updateCloudButton();
               return false;
             }
             // Защита: пока идёт перезагрузка, тики не должны затереть
             // принятые данные старой копией из памяти
             this.reloading = true;
-            this.applySnapshot(row.data);
+            this.applySnapshot(remote);
             localStorage.setItem(this.LS_PUSH_HASH, cloudContent);
             this.updateCloudButton();
             return true;
@@ -3377,25 +3684,25 @@
             this.lastError = String((err && err.message) || err);
             this.updateCloudButton();
             return false;
-          } finally {
-            this.busy = false;
           }
         }
-        static canAutoApply() {
-          // Не подменяем локальное состояние перезагрузкой, пока идёт
-          // трекинг, открыто модальное окно или пользователь печатает в поле.
+        static canAutoApply(controlNewer = false) {
+          // Не подменяем локальное состояние перезагрузкой, пока открыто
+          // модальное окно или пользователь печатает в поле. Локальный
+          // трекинг больше не блокирует приём: счётчики выводятся из
+          // startTime, а чужое управляющее действие важнее.
           try {
-            if (AppState.getTimers().some(t => t.isTracking)) return false;
             if (ModalController.isOpen()) return false;
             const active = document.activeElement;
             if (active && active.tagName === "INPUT") return false;
           } catch (e) {}
           return true;
         }
-        static reloadAllowed() {
-          // Защита от «шторма перезагрузок»: автоприём не чаще раза в 30 с
+        static reloadAllowed(controlNewer = false) {
+          // Защита от «шторма перезагрузок»: обычный автоприём не чаще
+          // раза в 30 с; управляющее действие — не чаще раза в 5 с
           const last = Number(sessionStorage.getItem("cloudReloadAt") || 0);
-          return Date.now() - last >= 30000;
+          return Date.now() - last >= (controlNewer ? 5000 : 30000);
         }
         static reloadForSync(force = false) {
           if (!force && !this.reloadAllowed()) return;
@@ -3413,18 +3720,20 @@
             CloudController.openKeyModal(true); // первый запуск: спросить ключ
             return;
           }
+          this.initRealtime(); // fire-and-forget
           const applied = await this.pullNow();
           if (applied) this.reloadForSync(true);
           this.updateCloudButton();
         }
         static startPeriodic() {
           if (this.periodicTimer) return;
-          this.periodicTimer = setInterval(
-            () => this.tick(),
-            CLOUD_CONFIG.syncIntervalMs
-          );
+          this.scheduleNext();
           document.addEventListener("visibilitychange", () => {
-            if (document.visibilityState === "visible") this.tick();
+            if (document.visibilityState === "visible") {
+              this.tick().finally(() => {
+                if (!this.reloading) this.scheduleNext();
+              });
+            }
           });
           window.addEventListener("beforeunload", () => {
             // Последний шанс отправить изменения (keepalive — запрос
@@ -3436,12 +3745,141 @@
         }
         static async tick() {
           if (!this.isActive() || this.reloading) return;
-          // 1. pushNow сам фиксирует модель в localStorage и отправляет
-          //    снимок, только если были изменения (сравнение хэшей).
-          await this.pushNow();
-          // 2. Тянем из облака; если данные отличаются и безопасно — перезагрузка
+          this.initRealtime(); // fire-and-forget: подключение/ретрай
+          // 1. СНАЧАЛА тянем из облака: чужое управляющее действие
+          //    (секвенция новее) имеет приоритет над локальными изменениями —
+          //    push не должен затереть его устаревшим состоянием.
           const applied = await this.pullNow();
-          if (applied) this.reloadForSync();
+          if (applied) {
+            this.reloadForSync();
+            return; // страница перезагружается с принятым состоянием
+          }
+          // 2. Затем отправляем локальные изменения: pushNow сам фиксирует
+          //    модель в localStorage и отправляет снимок только при отличии.
+          await this.pushNow();
+        }
+        static interactiveSync() {
+          // Логика «Обновить»: любой клик, получение/потеря фокуса полем
+          // вызывают немедленную синхронизацию (push + pull) с дебаунсом —
+          // серия быстрых действий сливается в один обмен. В полном простое
+          // работает обычный тик раз в syncIntervalMs.
+          if (!this.isActive() || this.reloading) return;
+          this.lastActivityAt = Date.now();
+          if (this._interactiveDebounce) {
+            clearTimeout(this._interactiveDebounce);
+          }
+          this._interactiveDebounce = setTimeout(() => {
+            this._interactiveDebounce = null;
+            this.tick();
+          }, 700);
+        }
+        // --- Supabase Realtime: broadcast-пинги для мгновенной доставки ---
+        // Если Realtime недоступен (офлайн, заблокирован CDN, среда без
+        // ES-модулей) — молча остаётся опрос (тик), он же адаптивный.
+        static async loadRealtimeModule() {
+          return import("https://cdn.jsdelivr.net/npm/@supabase/realtime-js@2/+esm");
+        }
+        static async initRealtime() {
+          if (!this.isActive() || this.rtReady) return;
+          if (this.rtFailed) {
+            if (Date.now() < this.rtRetryAt) return;
+            this.rtFailed = false;
+          }
+          try {
+            const mod = await this.loadRealtimeModule();
+            const RealtimeClient =
+              (mod &&
+                (mod.RealtimeClient ||
+                  (mod.default && mod.default.RealtimeClient))) ||
+              null;
+            if (!RealtimeClient) throw new Error("RealtimeClient not found");
+            const wsBase =
+              String(CLOUD_CONFIG.url).replace(/\/+$/, "").replace(/^http/, "ws") +
+              "/realtime/v1";
+            const client = new RealtimeClient(wsBase, {
+              params: { apikey: CLOUD_CONFIG.anonKey },
+            });
+            // Имя канала = хэш ключа синхронизации: без ключа канал не найти
+            const channel = client.channel(`sync-${this.getKeyHash()}`);
+            channel.on("broadcast", { event: "ping" }, msg => {
+              this.onRemotePing(msg && msg.payload);
+            });
+            // subscribe() резолвится объектом канала, а не статусом —
+            // надёжно ждём результат через callback со своим таймаутом
+            await new Promise((resolve, reject) => {
+              const guard = setTimeout(
+                () => reject(new Error("subscribe timeout")),
+                10000
+              );
+              channel.subscribe((status, err) => {
+                clearTimeout(guard);
+                if (status === "SUBSCRIBED") resolve(status);
+                else reject(err || new Error(String(status)));
+              });
+            });
+            this.rt = client;
+            this.rtChannel = channel;
+            this.rtReady = true;
+          } catch (e) {
+            this.rtFailed = true;
+            this.rtRetryAt = Date.now() + 30000; // редкие ретраи, без штурма
+          }
+        }
+        static onRemotePing(payload) {
+          // Свои собственные пинги игнорируем (устройство помечено в payload)
+          if (payload && payload.device && payload.device === this.deviceId()) {
+            return;
+          }
+          this.lastActivityAt = Date.now();
+          this.tick(); // немедленный pull(+push) — как по действию пользователя
+        }
+        static broadcastPing() {
+          if (!this.rtReady || !this.rtChannel) return;
+          try {
+            const sent = this.rtChannel.send({
+              type: "broadcast",
+              event: "ping",
+              payload: {
+                device: this.deviceId(),
+                seq: this.localSeq(),
+                at: Date.now(),
+              },
+            });
+            if (sent && typeof sent.catch === "function") sent.catch(() => {});
+          } catch (e) {}
+        }
+        static teardownRealtime() {
+          try {
+            if (this.rtChannel && this.rtChannel.unsubscribe) {
+              this.rtChannel.unsubscribe();
+            }
+            if (this.rt && this.rt.disconnect) this.rt.disconnect();
+          } catch (e) {}
+          this.rt = null;
+          this.rtChannel = null;
+          this.rtReady = false;
+        }
+        static currentPollDelay() {
+          const base = Number(CLOUD_CONFIG.syncIntervalMs) || 20000;
+          // С работающим Realtime мгновенность обеспечивают пинги — редкий
+          // опрос лишь страховка. Без Realtime ускоряемся, когда идёт трекинг
+          // или была недавняя активность.
+          if (this.rtReady) return base;
+          try {
+            const tracking = AppState.getTimers().some(t => t.isTracking);
+            const recent = Date.now() - this.lastActivityAt < 60000;
+            if (tracking || recent) return Math.min(4000, base);
+          } catch (e) {}
+          return base;
+        }
+        static scheduleNext() {
+          if (this.periodicTimer) clearTimeout(this.periodicTimer);
+          this.periodicTimer = setTimeout(() => {
+            this.periodicTimer = null;
+            this.tick().finally(() => {
+              if (!this.reloading) this.scheduleNext();
+            });
+          }, this.currentPollDelay());
         }
         static onLocalSaved() {
           if (!this.isActive()) return;
@@ -3520,15 +3958,12 @@
           );
           const lastSync =
             CloudSync.lastSyncAt ||
-            localStorage.getItem(CloudSync.LS_LAST_SYNC) ||
-            "—";
+            localStorage.getItem(CloudSync.LS_LAST_SYNC);
           status.appendChild(
             M.el(
               "div",
               {},
-              `Последняя синхронизация: ${String(lastSync)
-                .replace("T", " ")
-                .slice(0, 19)}`
+              `Последняя синхронизация: ${CloudSync.formatSyncTime(lastSync)}`
             )
           );
           box.appendChild(status);
