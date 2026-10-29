@@ -1,3 +1,5 @@
+
+
 <!DOCTYPE html>
 <html>
   <head>
@@ -263,7 +265,7 @@
       //  приложение работает в чисто локальном режиме (как раньше).
       // ============================================================
       // Версия приложения — видна в окне облака (контроль деплоя)
-      const APP_VERSION = "2026-10-28-tz1";
+      const APP_VERSION = "2026-10-28-tz2";
       const CLOUD_CONFIG = {
         url: "https://iqvqjiwjizlzronudgui.supabase.co",
         anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
@@ -420,7 +422,7 @@
         static checkForSessionReset() {
           const lastSessionEndTime = AppState.getLastSessionEndTime();
           if (!lastSessionEndTime) return false;
-          const now = new Date();
+          const now = new Date(CloudSync.serverNow());
           if (now >= lastSessionEndTime) {
             AppState.setNeedsReset(true);
             return true;
@@ -455,7 +457,7 @@
         static advanceSessionEndTime() {
           const last = AppState.getLastSessionEndTime();
           if (!last) return;
-          const now = new Date();
+          const now = new Date(CloudSync.serverNow());
           if (now < last) return;
           const globalEnd = AppState.getGlobalEndTime();
           if (globalEnd && !isNaN(globalEnd.getTime())) {
@@ -962,7 +964,8 @@
             lastSessionEndTime ? lastSessionEndTime.getTime().toString() : ""
           );
           // «Сердцебиение» для авто-паузы: момент последнего сохранения
-          this.setItemToLocalStorage("lastSaveAt", String(Date.now()));
+          // (в серверной системе отсчёта — сравнимо между устройствами)
+          this.setItemToLocalStorage("lastSaveAt", String(CloudSync.serverNow()));
           // Облако: локальное состояние обновилось — pushNow отправит
           // его, только если содержимое действительно изменилось.
           CloudSync.onLocalSaved();
@@ -1100,7 +1103,8 @@
             if (ownedHere) {
               const heartbeat =
                 Number(this.getItemFromLocalStorage("lastSaveAt")) || 0;
-              const now = Date.now();
+              CloudSync.loadSkew();
+              const now = CloudSync.serverNow();
               let autoPaused = false;
               AppState.getTimers().forEach(timer => {
                 if (!timer.isTracking) return;
@@ -1414,7 +1418,7 @@
           const timer = timers.find(t => t.id === id);
           if (!timer) return;
           if (timer.isTracking) {
-            const now = new Date();
+            const now = new Date(CloudSync.serverNow());
             AppState.setLastUpdateTime(now);
             this.stopTracking(timer);
             CloudSync.clearTrackingOwner();
@@ -1633,7 +1637,9 @@
         }
         static startTracking(timer) {
           timer.isTracking = true;
-          timer.startTime = new Date();
+          // startTime — в серверной системе отсчёта: любое устройство
+          // (даже с расстроенными часами) вычислит одинаковый Факт
+          timer.startTime = new Date(CloudSync.serverNow());
           // Снимок счётчиков на момент старта: факт выводится как
           // «снимок + (сейчас − startTime)», поэтому любое устройство
           // получает одинаковые значения (зеркалирование без двойного счёта).
@@ -1655,13 +1661,13 @@
           // После ручной правки счётчиков во время трекинга — вывод
           // продолжается от новых значений
           if (timer.isTracking) {
-            timer.startTime = new Date();
+            timer.startTime = new Date(CloudSync.serverNow());
             timer.trackingSnapshot = this.captureSnapshot(timer);
           }
         }
         static stopTracking(timer) {
           // Точная фиксация накопленного перед остановкой
-          this.syncTrackedFromClock(timer, new Date());
+          this.syncTrackedFromClock(timer, new Date(CloudSync.serverNow()));
           timer.startTime = null;
           timer.isTracking = false;
           timer.trackingSnapshot = null;
@@ -1711,7 +1717,7 @@
             snap.totalSeconds = (snap.totalSeconds || 0) + delta;
             snap.dailyTotalSeconds = (snap.dailyTotalSeconds || 0) + delta;
             snap.lifetimeTotalSeconds = (snap.lifetimeTotalSeconds || 0) + delta;
-            this.syncTrackedFromClock(timer, new Date());
+            this.syncTrackedFromClock(timer, new Date(CloudSync.serverNow()));
             return;
           }
           timer.totalTrackedSeconds = (timer.totalTrackedSeconds || 0) + delta;
@@ -1927,7 +1933,7 @@
       }
       class TimeCalculator {
         static getTotalTime() {
-          const now = new Date();
+          const now = new Date(CloudSync.serverNow());
           const globalEndTime = AppState.getGlobalEndTime();
           if (!globalEndTime) {
             // «Конец» не задан — до полуночи в зоне носителя часового пояса
@@ -1965,13 +1971,13 @@
           return [hours, minutes];
         }
         static getNextMidnight(now) {
-          // Полночь в зоне носителя часового пояса
+          // Полночь в зоне носителя часового пояса (от серверного времени)
           return new Date(
             TimeZoneHolder.zonedTimeToEpoch(
               0,
               0,
               TimeZoneHolder.zone(),
-              now.getTime()
+              CloudSync.serverNow()
             )
           );
         }
@@ -1995,7 +2001,7 @@
           return date;
         }
         static createNewGlobalEndTime(hours, minutes) {
-          const now = new Date();
+          const now = new Date(CloudSync.serverNow());
           // ЧЧ:ММ трактуется в часовом поясе НОСИТЕЛЯ: абсолютный момент
           // «Конца» одинаков на всех устройствах независимо от их поясов
           const epoch = TimeZoneHolder.zonedTimeToEpoch(
@@ -2073,7 +2079,7 @@
             t.dailyTotalSeconds = t.dailyTotalSeconds || 0;
             t.lifetimeTotalSeconds = t.lifetimeTotalSeconds || 0;
             if (t.isTracking && t.startTime && !AppState.isAwayModeActive()) {
-              const now = new Date();
+              const now = new Date(CloudSync.serverNow());
               // Зеркалируемый трекинг: счётчики выводятся из startTime +
               // снимка (сходятся на всех устройствах), а не копят дельты
               TimerModel.syncTrackedFromClock(t, now);
@@ -2097,7 +2103,7 @@
             AppState.getNeedsReset() ||
             (prevSessionEnd && new Date() >= prevSessionEnd);
           SessionManager.checkAndPerformReset();
-          const now = new Date();
+          const now = new Date(CloudSync.serverNow());
           let delta = (now - AppState.getLastUpdateTime()) / 1000;
           // Фикс БАГ #6: если в этом тике пересечена граница сессии (вкладка
           // "спала" и проснулась уже за границей), время ДО границы не
@@ -2741,7 +2747,7 @@
           shouldUpdateDisplay = false
         ) {
           const parsed = CalculationService.parseGlobalEndTime(timeValue);
-          const now = new Date();
+          const now = new Date(CloudSync.serverNow());
           let newGlobalEndTime = null;
           let sessionEndTime;
           if (parsed) {
@@ -2786,7 +2792,7 @@
           AppState.notify("displayNeedsUpdate");
         }
         static activateAwayMode() {
-          AppState.setAwayStartTime(new Date());
+          AppState.setAwayStartTime(new Date(CloudSync.serverNow()));
           const timers = AppState.getTimers();
           const updatedTimers = [];
           timers.forEach(t => {
@@ -3373,6 +3379,7 @@
         ];
         static ABANDON_MS = 150000;
         static clockSkewMs = 0;
+        static _skewLoaded = false;
         static lastError = "";
         static _chain = Promise.resolve();
         static lastSyncAt = null;
@@ -3454,6 +3461,25 @@
         static correctedNow() {
           // Локальное время с поправкой на расхождение с сервером
           return Date.now() + this.clockSkewMs;
+        }
+        static serverNow() {
+          // «Серверное» время устройства: единая система отсчёта для всех
+          // устройств независимо от рассинхрона их часов. В локальном режиме
+          // поправка равна 0 и поведение совпадает с обычным Date.now().
+          // Поправка восстанавливается из localStorage лениво — до первого
+          // RPC после перезагрузки (boot может и не состояться).
+          if (!this._skewLoaded) {
+            this._skewLoaded = true;
+            this.loadSkew();
+          }
+          return Date.now() + this.clockSkewMs;
+        }
+        static loadSkew() {
+          // Восстановить поправку после перезагрузки (до первого RPC)
+          try {
+            const saved = Number(localStorage.getItem("clockSkewMs"));
+            if (Number.isFinite(saved)) this.clockSkewMs = saved;
+          } catch (e) {}
         }
         static clearTrackingOwner() {
           localStorage.removeItem("trackingOwnerDevice");
@@ -3583,7 +3609,7 @@
           // проверка «страница долго была закрыта» не должна зависеть от
           // расхождения часов устройств (иначе живая чужая сессия на входе
           // ошибочно сворачивалась в авто-паузу с обнулённым Фактом).
-          localStorage.setItem("lastSaveAt", String(Date.now()));
+          localStorage.setItem("lastSaveAt", String(CloudSync.serverNow()));
           // Принятое состояние считаем «уже отправленным»: не слать его
           // обратно и не принимать повторно
           localStorage.setItem(this.LS_PUSH_HASH, this.snapshotContentHash(data));
@@ -3640,6 +3666,9 @@
               const serverMs = Date.parse(dateHdr);
               if (Number.isFinite(serverMs)) {
                 this.clockSkewMs = serverMs - Date.now();
+                try {
+                  localStorage.setItem("clockSkewMs", String(this.clockSkewMs));
+                } catch (e) {}
               }
             }
           } catch (e) {}
@@ -3823,9 +3852,10 @@
               (!this.canAutoApply(controlNewer) ||
                 !this.reloadAllowed(controlNewer))
             ) {
-              // Чужое управляющее действие отложено (троттлинг/модалка/ввод) —
-              // назначаем быстрый ретрай, а не ждём периодического тика
-              if (controlNewer) this.scheduleControlRetry();
+              // Приём отложен (троттлинг/модалка/ввод) — назначаем быстрый
+              // ретрай, а не ждём периодического тика. Это же сводит гонку
+              // одновременных заявок носителя часового пояса за секунды.
+              this.scheduleControlRetry();
               this.updateCloudButton();
               return false;
             }
@@ -3872,6 +3902,15 @@
           sessionStorage.setItem("cloudReloadAt", String(Date.now()));
           location.reload();
         }
+        static reloadAfterAdopt() {
+          // Данные уже приняты в localStorage (pullNow прошёл все проверки,
+          // включая троттлинг) — перезагружаемся безусловно. Повторная
+          // проверка троттлинга здесь раньше оставляла страницу «зомби»
+          // с reloading=true без перезагрузки: синхронизация навсегда
+          // блокировалась до ручного обновления.
+          sessionStorage.setItem("cloudReloadAt", String(Date.now()));
+          location.reload();
+        }
 
         // --- Запуск и фоновая работа ---
         static async boot() {
@@ -3883,9 +3922,10 @@
             CloudController.openKeyModal(true); // первый запуск: спросить ключ
             return;
           }
+          this.loadSkew();
           this.initRealtime(); // fire-and-forget
           const applied = await this.pullNow();
-          if (applied) this.reloadForSync(true);
+          if (applied) this.reloadAfterAdopt();
           else TimeZoneHolder.ensure(); // носитель есть всегда
           this.updateCloudButton();
         }
@@ -3915,7 +3955,7 @@
           //    push не должен затереть его устаревшим состоянием.
           const applied = await this.pullNow();
           if (applied) {
-            this.reloadForSync();
+            this.reloadAfterAdopt();
             return; // страница перезагружается с принятым состоянием
           }
           // 2. Затем отправляем локальные изменения: pushNow сам фиксирует
