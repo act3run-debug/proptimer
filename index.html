@@ -263,7 +263,7 @@
       //  приложение работает в чисто локальном режиме (как раньше).
       // ============================================================
       // Версия приложения — видна в окне облака (контроль деплоя)
-      const APP_VERSION = "2026-10-28-tz3";
+      const APP_VERSION = "2026-10-29-tz4";
       const CLOUD_CONFIG = {
         url: "https://iqvqjiwjizlzronudgui.supabase.co",
         anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
@@ -966,15 +966,10 @@
           this.setItemToLocalStorage("lastSaveAt", String(CloudSync.serverNow()));
           // Носитель публикует расхождение СВОИХ часов с сервером: все
           // устройства трактуют «Конец» по фактическим часам носителя
-          if (TimeZoneHolder.isHolder()) {
-            // Квантование до секунд: миллисекундный джиттер RTT не должен
-            // менять хэш состояния (иначе force-pull принимал бы «изменившуюся»
-            // запись и перезагружал страницу впустую)
-            this.setItemToLocalStorage(
-              "tzHolderSkewMs",
-              String(Math.round(CloudSync.clockSkewMs / 1000) * 1000)
-            );
-          }
+          // С гистерезисом 2 с: секундный джиттер RTT не меняет хэш состояния
+          // (иначе force-pull принимал бы «изменившуюся» запись и перезагружал
+          // страницу впустую), реальный дрейф часов - публикуется
+          TimeZoneHolder.republishSkew();
           // Облако: локальное состояние обновилось — pushNow отправит
           // его, только если содержимое действительно изменилось.
           CloudSync.onLocalSaved();
@@ -1181,7 +1176,11 @@
             derived.setDate(derived.getDate() - 1);
             AppState.setLastSessionEndTime(derived);
           }
-          const now = new Date();
+          // serverNow: восстановление планов после перезагрузки не должно
+          // зависеть от СВОИХ часов устройства (носитель со спешащими часами
+          // на каждом reload «съёживал» планы — расхождение «План» между
+          // устройствами)
+          const now = new Date(CloudSync.serverNow());
           const remaining = CalculationService.calculateRemainingTime(
             newGlobalEndTime,
             now
@@ -1415,7 +1414,7 @@
               );
               TimerModel.setTimerValue(timer, "totalTrackedSeconds", 0);
               TimerModel.rebaseTracking(timer);
-              AppState.setLastUpdateTime(new Date());
+              AppState.setLastUpdateTime(new Date(CloudSync.serverNow()));
               this.updateTimerAfterApply();
             }
           }
@@ -2093,11 +2092,14 @@
         }
         static updateCalculations() {
           const prevSessionEnd = AppState.getLastSessionEndTime();
+          const now = new Date(CloudSync.serverNow());
+          // Граница сессии сравнивается в СЕРВЕРНОЙ системе отсчёта: сырые
+          // локальные часы на устройстве со сбитым временем взводили сброс
+          // раньше/позже остальных устройств
           const resetDue =
             AppState.getNeedsReset() ||
-            (prevSessionEnd && new Date() >= prevSessionEnd);
+            (prevSessionEnd && now >= prevSessionEnd);
           SessionManager.checkAndPerformReset();
-          const now = new Date(CloudSync.serverNow());
           let delta = (now - AppState.getLastUpdateTime()) / 1000;
           // Фикс БАГ #6: если в этом тике пересечена граница сессии (вкладка
           // "спала" и проснулась уже за границей), время ДО границы не
@@ -3369,6 +3371,13 @@
         ];
         static ABANDON_MS = 150000;
         static clockSkewMs = 0;
+        // NTP-приём: самое точное измерение расхождения часов - то, у
+        // которого минимальный RTT (меньше неопределённость середины окна).
+        // Именно оно публикуется как сдвиг часов носителя - иначе разовый
+        // «медленный» замер закреплялся бы гистерезисом и уводил «Конец».
+        static bestSkewMs = 0;
+        static bestSkewRtt = Infinity;
+        static bestSkewAt = null;
         static _skewLoaded = false;
         static lastError = "";
         static _chain = Promise.resolve();
@@ -3592,8 +3601,45 @@
           data.__device = this.deviceId();
           return data;
         }
+        static adoptHolderSkew(remote) {
+          // Сдвиг часов носителя - поле, принадлежащее НОСИТЕЛЮ: берём его
+          // из любого облачного снимка сразу, минуя гейты полного приёма.
+          // true = локальное опубликованное значение изменилось.
+          try {
+            const holder = remote && remote.tzHolderDevice;
+            if (!holder || holder === this.deviceId()) return false;
+            if (
+              remote.tzHolderSkewMs === null ||
+              remote.tzHolderSkewMs === undefined
+            ) {
+              return false;
+            }
+            const incoming = Number(remote.tzHolderSkewMs);
+            if (!Number.isFinite(incoming)) return false;
+            const raw = localStorage.getItem("tzHolderSkewMs");
+            if (raw !== null && Number(raw) === incoming) return false;
+            localStorage.setItem("tzHolderSkewMs", String(incoming));
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }
         static applySnapshot(data) {
           if (!data || typeof data !== "object") return;
+          // Если носитель - мы, чужая устаревшая копия НАШЕГО поля (сдвиг
+          // часов) не должна затирать локально опубликованное значение
+          if (
+            data.tzHolderDevice &&
+            data.tzHolderDevice === this.deviceId() &&
+            localStorage.getItem("tzHolderSkewMs") !== null &&
+            String(data.tzHolderSkewMs) !==
+              localStorage.getItem("tzHolderSkewMs")
+          ) {
+            data = {
+              ...data,
+              tzHolderSkewMs: localStorage.getItem("tzHolderSkewMs"),
+            };
+          }
           this.STATE_KEYS.forEach(key => {
             const value = data[key];
             if (value === null || value === undefined) {
@@ -3655,39 +3701,55 @@
             } catch (e) {}
             throw new Error(`${fn}: HTTP ${res.status} ${msg}`);
           }
-          // Калибровка часов, источник 1 — заголовок Date. ВНИМАНИЕ: в
-          // браузере он обычно недоступен (Date не входит в CORS-safelist),
-          // поэтому работает только same-origin/тесты — источник 2 главнее.
+          // t1 — момент получения ответа: середина RTT для калибровки часов
           const t1 = Date.now();
-          try {
-            const dateHdr =
-              res.headers && res.headers.get ? res.headers.get("date") : null;
-            if (dateHdr) {
-              const serverMs = Date.parse(dateHdr);
-              if (Number.isFinite(serverMs)) {
-                this.setClockSkew(serverMs - (t0 + t1) / 2);
-              }
-            }
-          } catch (e) {}
           const body = await res.json();
-          // Источник 2 (надёжный в браузере): тело ответа put_state содержит
-          // серверный now() — он не подвержен CORS-ограничениям.
+          // Калибровка часов — ЕДИНСТВЕННЫЙ источник: серверный now() в теле
+          // ответа put_state (не подвержен CORS-ограничениям, точность до мс).
+          // Заголовок Date намеренно НЕ используется: в браузере он закрыт
+          // CORS-safelist'ом (тесты в Node видели бы то, чего прод не видит),
+          // а его секундная гранулярность закрепляла бы грубую первую калибровку.
           try {
             if (fn === "put_state" && typeof body === "string") {
               const serverMs = Date.parse(body);
               if (Number.isFinite(serverMs)) {
-                this.setClockSkew(serverMs - (t0 + t1) / 2);
+                this.setClockSkew(serverMs - (t0 + t1) / 2, t1 - t0);
               }
             }
           } catch (e) {}
           return body;
         }
-        static setClockSkew(ms) {
+        static setClockSkew(ms, rtt = Infinity) {
           if (!Number.isFinite(ms)) return;
+          const prev = this.clockSkewMs;
           this.clockSkewMs = ms;
           try {
             localStorage.setItem("clockSkewMs", String(Math.round(ms)));
             localStorage.setItem("clockSkewAt", String(Date.now()));
+          } catch (e) {}
+          // NTP-фильтр: замер с меньшим RTT точнее. Фильтр сбрасывается,
+          // если лучший замер устарел (10 мин - часы могли уйти дрейфом)
+          // или новый замер отличается прыжком (>30 с - часы перевели).
+          const at = Date.now();
+          const stale = this.bestSkewAt === null || at - this.bestSkewAt > 600000;
+          const jump = Math.abs(ms - this.bestSkewMs) > 30000;
+          if (stale || jump || (Number.isFinite(rtt) && rtt < this.bestSkewRtt)) {
+            if (Number.isFinite(rtt)) this.bestSkewRtt = rtt;
+            this.bestSkewMs = ms;
+            this.bestSkewAt = at;
+          }
+          // Носитель републикует СВОЙ сдвиг при изменении лучшего замера
+          // (порог внутри republishSkew) и сразу разносит его force-push'ем;
+          // все устройства мягко пересчитывают «Конец»/планы. Скачок СОБСТВЕННЫХ
+          // часов (>=2 с) тоже пересчитывает планы - от нового serverNow.
+          try {
+            const published = TimeZoneHolder.republishSkew();
+            if (published || Math.abs(ms - prev) >= 2000) {
+              TimeZoneHolder.softRecalc();
+            }
+            if (published && this.isActive() && !this.reloading) {
+              this.pushNow(true);
+            }
           } catch (e) {}
         }
         static cloudGet() {
@@ -3790,6 +3852,13 @@
             }
             const remote = row.data;
             const local = this.snapshotLocal();
+            // Сдвиг часов носителя принимается СРАЗУ (в обход минутного
+            // квантования meaningful-проекции и троттлинга перезагрузок):
+            // «Конец»/планы не должны ждать окна приёма. Это же устраняет
+            // затирание: следующий push несёт уже свежее значение.
+            if (this.adoptHolderSkew(remote)) {
+              TimeZoneHolder.softRecalc();
+            }
             // «Мёртвый владелец»: зеркалим чужой трекинг, но облачная запись
             // давно не обновлялась (владелец закрылся, не нажав «Пауза»).
             // Возраст — по СЕРВЕРНОМУ updated_at с поправкой на часы; свёртка —
@@ -3802,10 +3871,19 @@
               const localTracking = AppState.getTimers().some(
                 t => t.isTracking
               );
-              const ageMs = row.updated_at
-                ? this.correctedNow() - Date.parse(row.updated_at)
-                : 0;
-              if (
+              // Возраст сессии — по «сердцебиению» владельца (lastSaveAt,
+              // серверная система отсчёта): он не зависит от чужих часов и
+              // не освежается калибровочным эхо-путом (в отличие от
+              // серверного updated_at). Резерв — updated_at записи.
+              const heartbeat = Number(remote.lastSaveAt) || 0;
+              const ageOf = () => {
+                if (heartbeat > 0) return this.correctedNow() - heartbeat;
+                return row.updated_at
+                  ? this.correctedNow() - Date.parse(row.updated_at)
+                  : 0;
+              };
+              let ageMs = ageOf();
+              const foldCandidate =
                 remoteTracking &&
                 localTracking &&
                 owner &&
@@ -3813,7 +3891,29 @@
                 ageMs > this.ABANDON_MS &&
                 Date.now() - this.lastPushAtMs > this.ABANDON_MS &&
                 this.controlProjection(remote) ===
-                  this.controlProjection(local)
+                  this.controlProjection(local);
+              if (
+                foldCandidate &&
+                localStorage.getItem("clockSkewMs") === null
+              ) {
+                // Свои часы ещё не откалиброваны — ageMs недостоверен:
+                // устройство со сбитыми часами приняло бы ЖИВУЮ сессию за
+                // мёртвую. Калибруемся эхо-путом (запись возвращается в
+                // облако НЕИЗМЕННОЙ: данные и сердцебиение владельца целы,
+                // освежается лишь серверная метка времени), затем пересчёт.
+                try {
+                  await this.cloudPut(remote, {});
+                } catch (e) {}
+                if (localStorage.getItem("clockSkewMs") === null) {
+                  this.updateCloudButton();
+                  return false; // калибровка не вышла — решение отложено
+                }
+                ageMs = ageOf();
+              }
+              if (
+                foldCandidate &&
+                localStorage.getItem("clockSkewMs") !== null &&
+                ageMs > this.ABANDON_MS
               ) {
                 const foldMs = Number(remote.lastSaveAt);
                 const foldAt =
@@ -4168,16 +4268,70 @@
           return localStorage.getItem(this.LS_ZONE) || this.localZone();
         }
         static holderSkewMs() {
-          // Расхождение часов носителя с серверным временем (server − local;
-          // у спешащих часов — отрицательное). Часы носителя могут быть
-          // сбиты произвольно — «Конец» привязан именно к ним.
-          // Носитель использует свою живую калибровку (свежайшую),
-          // остальные — опубликованное в состоянии значение.
-          if (this.isHolder()) {
-            return Math.round(CloudSync.clockSkewMs / 1000) * 1000;
+          // Расхождение часов носителя с серверным временем (server - local;
+          // у спешащих часов - отрицательное). Часы носителя могут быть
+          // сбиты произвольно - «Конец» привязан именно к ним.
+          // ЕДИНЫЙ источник для ВСЕХ устройств (включая носителя) -
+          // ОПУБЛИКОВАННОЕ значение: раньше носитель считал «Конец» по живой
+          // калибровке (джиттер RTT), а зеркала - по опубликованной, поэтому
+          // «План»/«Осталось» расходились на секунды даже в покое.
+          const raw = localStorage.getItem("tzHolderSkewMs");
+          if (raw !== null) {
+            const v = Number(raw);
+            if (Number.isFinite(v)) return v;
           }
-          const v = Number(localStorage.getItem("tzHolderSkewMs"));
-          return Number.isFinite(v) ? v : 0;
+          if (this.isHolder()) {
+            return Math.round(CloudSync.bestSkewMs / 1000) * 1000;
+          }
+          return 0;
+        }
+        static republishSkew(force = false) {
+          // Носитель публикует расхождение СВОИХ часов (в LS, оттуда - в
+          // состояние). Берётся лучший замер (минимальный RTT); гистерезис
+          // 2 с гасит остаточный джиттер, но реальный дрейф часов
+          // публикуется. true = опубликованное значение изменилось.
+          if (!this.isHolder()) return false;
+          try {
+            // Источник: лучший замер этой инстанции; до первого замера -
+            // ПЕРСИСТЕНТНАЯ калибровка из LS (serverNow грузит её лениво),
+            // а не нулевое начальное значение фильтра. Иначе носитель на
+            // каждой перезагрузке публиковал бы 0 до первого put_state, и
+            // зеркала перевызвали бы «Конец» на минуты (ровно тот баг,
+            // из-за которого «План»/«Осталось» расходились).
+            const live = Math.round(
+              (CloudSync.bestSkewAt !== null
+                ? CloudSync.bestSkewMs
+                : CloudSync.serverNow() - Date.now()) /
+                1000
+            ) * 1000;
+            const raw = localStorage.getItem("tzHolderSkewMs");
+            const pub = raw === null ? NaN : Number(raw);
+            if (Number.isFinite(pub)) {
+              if (pub === live) return false;
+              // Порог 1 с: лучший замер (минимальный RTT) стабилен, поэтому
+              // секундная коррекция публикации безопасна и не даёт «Концу»
+              // расходиться между устройствами на видимые секунды
+              if (!force && Math.abs(live - pub) < 1000) return false;
+            }
+            localStorage.setItem("tzHolderSkewMs", String(live));
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }
+        static softRecalc() {
+          // Мягкий пересчёт ЖИВОЙ модели после изменения сдвига часов:
+          // «Конец» перевызывается заново, планы пересчитываются. Без
+          // сохранения и пуша - планы не входят в meaningful-проекцию,
+          // шторма синхронизации не будет. В away-режиме распределение
+          // заморожено (как в autoUpdate) - не трогаем.
+          try {
+            if (CloudSync.reloading) return;
+            if (AppState.isAwayModeActive()) return;
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+            this.updateUI();
+            AppState.notify("displayNeedsUpdate");
+          } catch (e) {}
         }
         static endEpoch(hours, minutes, fromMs) {
           // Момент, когда ЧАСЫ носителя (его зона + их сдвиг) показывают
@@ -4188,8 +4342,12 @@
           );
         }
         static localEquivalentHHMM(epochMs) {
-          // Что показывают ЧАСЫ этого устройства (в его зоне) в момент epochMs
-          return this.formatHHMM(epochMs - CloudSync.clockSkewMs, this.localZone());
+          // Что показывают ЧАСЫ этого устройства (в его зоне) в момент
+          // epochMs. Округление до секунд: «Конец» попадает ровно в минуту,
+          // и миллисекундный шум собственной калибровки (20:54:59.999)
+          // не должен переворачивать отображаемую минуту (20:54).
+          const own = Math.round((epochMs - CloudSync.clockSkewMs) / 1000) * 1000;
+          return this.formatHHMM(own, this.localZone());
         }
         static holderDevice() {
           return localStorage.getItem(this.LS_DEVICE) || "";
@@ -4267,10 +4425,7 @@
           // Перехват носительства: мгновенная рассылка всем устройствам
           localStorage.setItem(this.LS_DEVICE, CloudSync.deviceId());
           localStorage.setItem(this.LS_ZONE, this.localZone());
-          localStorage.setItem(
-            "tzHolderSkewMs",
-            String(Math.round(CloudSync.clockSkewMs / 1000) * 1000)
-          );
+          this.republishSkew(true);
           if (recalc && AppState.getGlobalEndTimeFromUI()) {
             // Планы пересчитываются от новой трактовки «Конца»
             TimeManager.updateGlobalEndTimeAndPlans(null, null, true);
