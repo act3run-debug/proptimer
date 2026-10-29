@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html>
   <head>
@@ -265,7 +263,7 @@
       //  приложение работает в чисто локальном режиме (как раньше).
       // ============================================================
       // Версия приложения — видна в окне облака (контроль деплоя)
-      const APP_VERSION = "2026-10-28-tz2";
+      const APP_VERSION = "2026-10-28-tz3";
       const CLOUD_CONFIG = {
         url: "https://iqvqjiwjizlzronudgui.supabase.co",
         anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
@@ -966,6 +964,17 @@
           // «Сердцебиение» для авто-паузы: момент последнего сохранения
           // (в серверной системе отсчёта — сравнимо между устройствами)
           this.setItemToLocalStorage("lastSaveAt", String(CloudSync.serverNow()));
+          // Носитель публикует расхождение СВОИХ часов с сервером: все
+          // устройства трактуют «Конец» по фактическим часам носителя
+          if (TimeZoneHolder.isHolder()) {
+            // Квантование до секунд: миллисекундный джиттер RTT не должен
+            // менять хэш состояния (иначе force-pull принимал бы «изменившуюся»
+            // запись и перезагружал страницу впустую)
+            this.setItemToLocalStorage(
+              "tzHolderSkewMs",
+              String(Math.round(CloudSync.clockSkewMs / 1000) * 1000)
+            );
+          }
           // Облако: локальное состояние обновилось — pushNow отправит
           // его, только если содержимое действительно изменилось.
           CloudSync.onLocalSaved();
@@ -1936,13 +1945,8 @@
           const now = new Date(CloudSync.serverNow());
           const globalEndTime = AppState.getGlobalEndTime();
           if (!globalEndTime) {
-            // «Конец» не задан — до полуночи в зоне носителя часового пояса
-            const midnight = TimeZoneHolder.zonedTimeToEpoch(
-              0,
-              0,
-              TimeZoneHolder.zone(),
-              now.getTime()
-            );
+            // «Конец» не задан — до полуночи по часам носителя
+            const midnight = TimeZoneHolder.endEpoch(0, 0, now.getTime());
             return Math.max(0, (midnight - now.getTime()) / 1000);
           }
           if (globalEndTime <= now) {
@@ -1971,14 +1975,9 @@
           return [hours, minutes];
         }
         static getNextMidnight(now) {
-          // Полночь в зоне носителя часового пояса (от серверного времени)
+          // Полночь по часам носителя (от серверного времени)
           return new Date(
-            TimeZoneHolder.zonedTimeToEpoch(
-              0,
-              0,
-              TimeZoneHolder.zone(),
-              CloudSync.serverNow()
-            )
+            TimeZoneHolder.endEpoch(0, 0, CloudSync.serverNow())
           );
         }
         static createDateWithTime(hours, minutes) {
@@ -2002,14 +2001,9 @@
         }
         static createNewGlobalEndTime(hours, minutes) {
           const now = new Date(CloudSync.serverNow());
-          // ЧЧ:ММ трактуется в часовом поясе НОСИТЕЛЯ: абсолютный момент
-          // «Конца» одинаков на всех устройствах независимо от их поясов
-          const epoch = TimeZoneHolder.zonedTimeToEpoch(
-            hours,
-            minutes,
-            TimeZoneHolder.zone(),
-            now.getTime()
-          );
+          // ЧЧ:ММ трактуется по ЧАСАМ НОСИТЕЛЯ (его зона + сдвиг его часов):
+          // абсолютный момент «Конца» одинаков на всех устройствах
+          const epoch = TimeZoneHolder.endEpoch(hours, minutes, now.getTime());
           return { newGlobalEndTime: new Date(epoch), now };
         }
         static calculateTotalWeight(timers) {
@@ -2723,12 +2717,7 @@
             let next;
             if (parsed) {
               next = new Date(
-                TimeZoneHolder.zonedTimeToEpoch(
-                  parsed[0],
-                  parsed[1],
-                  TimeZoneHolder.zone(),
-                  now.getTime()
-                )
+                TimeZoneHolder.endEpoch(parsed[0], parsed[1], now.getTime())
               );
             } else {
               next = new Date(globalEndTime);
@@ -3376,6 +3365,7 @@
           "trackingOwnerDevice",
           "tzHolderDevice",
           "tzHolderZone",
+          "tzHolderSkewMs",
         ];
         static ABANDON_MS = 150000;
         static clockSkewMs = 0;
@@ -3543,6 +3533,13 @@
             (snapshot && snapshot.controlSeq) || "0",
             (snapshot && snapshot.tzHolderDevice) || "",
             (snapshot && snapshot.tzHolderZone) || "",
+            // Расхождение часов носителя, квантованное до минут: смена
+            // распространяется, а секундный джиттер не вызывает приём
+            String(
+              Math.round(
+                (Number(snapshot && snapshot.tzHolderSkewMs) || 0) / 60000
+              )
+            ),
           ].join("#");
         }
         static meaningfulHash(snapshot) {
@@ -3640,6 +3637,7 @@
         // --- Сеть (PostgREST RPC) ---
         static async rpc(fn, args, options = {}) {
           const base = String(CLOUD_CONFIG.url).replace(/\/+$/, "");
+          const t0 = Date.now();
           const res = await fetch(`${base}/rest/v1/rpc/${fn}`, {
             method: "POST",
             headers: {
@@ -3657,22 +3655,40 @@
             } catch (e) {}
             throw new Error(`${fn}: HTTP ${res.status} ${msg}`);
           }
-          // Оценка расхождения часов (для проверки живости владельца):
-          // серверный заголовок Date против локального времени
+          // Калибровка часов, источник 1 — заголовок Date. ВНИМАНИЕ: в
+          // браузере он обычно недоступен (Date не входит в CORS-safelist),
+          // поэтому работает только same-origin/тесты — источник 2 главнее.
+          const t1 = Date.now();
           try {
             const dateHdr =
               res.headers && res.headers.get ? res.headers.get("date") : null;
             if (dateHdr) {
               const serverMs = Date.parse(dateHdr);
               if (Number.isFinite(serverMs)) {
-                this.clockSkewMs = serverMs - Date.now();
-                try {
-                  localStorage.setItem("clockSkewMs", String(this.clockSkewMs));
-                } catch (e) {}
+                this.setClockSkew(serverMs - (t0 + t1) / 2);
               }
             }
           } catch (e) {}
-          return res.json();
+          const body = await res.json();
+          // Источник 2 (надёжный в браузере): тело ответа put_state содержит
+          // серверный now() — он не подвержен CORS-ограничениям.
+          try {
+            if (fn === "put_state" && typeof body === "string") {
+              const serverMs = Date.parse(body);
+              if (Number.isFinite(serverMs)) {
+                this.setClockSkew(serverMs - (t0 + t1) / 2);
+              }
+            }
+          } catch (e) {}
+          return body;
+        }
+        static setClockSkew(ms) {
+          if (!Number.isFinite(ms)) return;
+          this.clockSkewMs = ms;
+          try {
+            localStorage.setItem("clockSkewMs", String(Math.round(ms)));
+            localStorage.setItem("clockSkewAt", String(Date.now()));
+          } catch (e) {}
         }
         static cloudGet() {
           return this.rpc("get_state", { p_key: this.getKeyHash() });
@@ -3890,6 +3906,15 @@
           const last = Number(sessionStorage.getItem("cloudReloadAt") || 0);
           return Date.now() - last >= (controlNewer ? 2500 : 30000);
         }
+        static async calibrateClock() {
+          // Однократный калибровочный push: измеряет расхождение часов по
+          // серверному времени из ответа put_state. Выполняется в очереди
+          // после других операций; пропускается, если калибровка уже есть.
+          if (!this.isActive() || localStorage.getItem("clockSkewMs")) {
+            return false;
+          }
+          return this.pushNow(true);
+        }
         static scheduleControlRetry() {
           if (this._pendingControlRetry) return;
           this._pendingControlRetry = setTimeout(() => {
@@ -3925,8 +3950,12 @@
           this.loadSkew();
           this.initRealtime(); // fire-and-forget
           const applied = await this.pullNow();
-          if (applied) this.reloadAfterAdopt();
-          else TimeZoneHolder.ensure(); // носитель есть всегда
+          if (applied) {
+            this.reloadAfterAdopt();
+          } else {
+            TimeZoneHolder.ensure(); // носитель есть всегда
+            this.calibrateClock();
+          }
           this.updateCloudButton();
         }
         static startPeriodic() {
@@ -4138,6 +4167,30 @@
           // Зона носителя; пока носителя нет (локальный режим) — своя зона
           return localStorage.getItem(this.LS_ZONE) || this.localZone();
         }
+        static holderSkewMs() {
+          // Расхождение часов носителя с серверным временем (server − local;
+          // у спешащих часов — отрицательное). Часы носителя могут быть
+          // сбиты произвольно — «Конец» привязан именно к ним.
+          // Носитель использует свою живую калибровку (свежайшую),
+          // остальные — опубликованное в состоянии значение.
+          if (this.isHolder()) {
+            return Math.round(CloudSync.clockSkewMs / 1000) * 1000;
+          }
+          const v = Number(localStorage.getItem("tzHolderSkewMs"));
+          return Number.isFinite(v) ? v : 0;
+        }
+        static endEpoch(hours, minutes, fromMs) {
+          // Момент, когда ЧАСЫ носителя (его зона + их сдвиг) показывают
+          // hours:minutes — единый «Конец» для всех устройств
+          return (
+            this.zonedTimeToEpoch(hours, minutes, this.zone(), fromMs) +
+            this.holderSkewMs()
+          );
+        }
+        static localEquivalentHHMM(epochMs) {
+          // Что показывают ЧАСЫ этого устройства (в его зоне) в момент epochMs
+          return this.formatHHMM(epochMs - CloudSync.clockSkewMs, this.localZone());
+        }
         static holderDevice() {
           return localStorage.getItem(this.LS_DEVICE) || "";
         }
@@ -4214,6 +4267,10 @@
           // Перехват носительства: мгновенная рассылка всем устройствам
           localStorage.setItem(this.LS_DEVICE, CloudSync.deviceId());
           localStorage.setItem(this.LS_ZONE, this.localZone());
+          localStorage.setItem(
+            "tzHolderSkewMs",
+            String(Math.round(CloudSync.clockSkewMs / 1000) * 1000)
+          );
           if (recalc && AppState.getGlobalEndTimeFromUI()) {
             // Планы пересчитываются от новой трактовки «Конца»
             TimeManager.updateGlobalEndTimeAndPlans(null, null, true);
@@ -4236,28 +4293,24 @@
             btn.classList.toggle("tz-holder", iAm);
             btn.classList.toggle("tz-follower", !iAm);
             btn.title = iAm
-              ? `Вы — носитель часового пояса (${zone}). «Конец» трактуется в вашем поясе. Клик на другом устройстве передаст носительство.`
-              : `Носитель — другое устройство (${zone}); «Конец» трактуется по его времени. Нажмите, чтобы перехватить.`;
+              ? `Вы — носитель времени (${zone}): «Конец» и все расчёты идут по вашим часам. Клик на другом устройстве передаст носительство.`
+              : `Носитель времени — другое устройство (${zone}): «Конец» трактуется по его часам. Нажмите, чтобы перехватить.`;
           }
           const hint = document.getElementById("tzHint");
           if (hint) {
             const value = AppState.getGlobalEndTimeFromUI();
             const m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(value || "");
-            if (m) {
-              const epoch = this.zonedTimeToEpoch(
+            if (m && !iAm) {
+              // Момент «Конца» по часам носителя -> что он значит на часах
+              // этого устройства (его зона + поправка его собственных часов)
+              const epoch = this.endEpoch(
                 Number(m[1]),
                 Number(m[2]),
-                zone,
-                Date.now()
+                CloudSync.serverNow()
               );
-              hint.textContent = iAm
-                ? `ваш пояс: ${zone}`
-                : `по поясу носителя (${zone}); у вас: ${this.formatHHMM(
-                    epoch,
-                    this.localZone()
-                  )}`;
+              hint.textContent = `у вас: ${this.localEquivalentHHMM(epoch)}`;
             } else {
-              hint.textContent = iAm ? "" : `пояс носителя: ${zone}`;
+              hint.textContent = "";
             }
           }
         }
