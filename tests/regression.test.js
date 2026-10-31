@@ -580,7 +580,10 @@ test("карточка задачи содержит все поля и кноп
   const { ctx, a } = scene();
   const card = ctx.card(a);
   assert.ok(card, "карточка создана");
-  assert.equal(card.className, "timer-container");
+  // Класс карточки: «timer-container» и, начиная с компактного режима,
+  // ещё и «collapsed» (карточки по умолчанию свёрнуты). Формула принимает
+  // оба варианта — тест обязан проходить и на исходном коде (A/B).
+  assert.match(card.className, /^timer-container( collapsed)?$/);
   assert.equal(card.id, `timer-${a.id}`);
   const actions = [...card.querySelectorAll("[data-action]")].map(el => el.getAttribute("data-action"));
   for (const expected of ["name", "proportion", "target-proportion", "track", "reset", "delete", "update", "split"]) {

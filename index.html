@@ -105,6 +105,32 @@
       .buttons-container {
         margin: 6px 0;
       }
+      /* Компактный режим: по умолчанию карточка СВЁРНУТА — видны только
+         Название, Целевая пропорция, Факт, Осталось, Приоритет и кнопка
+         Старт/Пауза. Строки, которым разрешено оставаться видимыми, помечены
+         классом compact-visible (см. TimerView.appendTimerElements); сама
+         стрелка живёт в compact-toggle-container и видна всегда.
+         Элементы НЕ удаляются из DOM: в них продолжают писать
+         updateDisplay/updateTimer*, поэтому расчёты и облачная синхронизация
+         сворачивания «не замечают». */
+      .compact-toggle-container {
+        margin: 0 0 6px 0;
+      }
+      .compact-toggle {
+        margin: 0;
+        padding: 1px 8px;
+        font-size: 12px;
+        line-height: 1.2;
+      }
+      .timer-container.collapsed {
+        padding: 8px 15px;
+      }
+      .timer-container.collapsed > *:not(.compact-visible) {
+        display: none;
+      }
+      .timer-container.collapsed .buttons-container button:not([data-action="track"]) {
+        display: none;
+      }
       /* Операции: кнопка меню справа, выпадающее меню, модальные окна,
          подсветка сиблингов разбиения */
       #menuButton {
@@ -264,7 +290,7 @@
       //  приложение работает в чисто локальном режиме (как раньше).
       // ============================================================
       // Версия приложения — видна в окне облака (контроль деплоя)
-      const APP_VERSION = "2026-10-31-away-auto";
+      const APP_VERSION = "2026-10-31-compact";
       const CLOUD_CONFIG = {
         url: "https://iqvqjiwjizlzronudgui.supabase.co",
         anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
@@ -1288,9 +1314,22 @@
       }
       class TimerController {
         static handleTimersContainerClick(event) {
+          const target = event.target;
+          // Стрелка компактного режима — чисто визуальное действие: пересчёт
+          // (autoUpdate) НЕ запускаем, чтобы раскрытие/сворачивание карточки
+          // не пересчитывало планы и не дёргало облачную синхронизацию.
+          if (
+            target.tagName === "BUTTON" &&
+            target.getAttribute("data-action") === "toggle-compact"
+          ) {
+            const compactTimerId = Utils.getTimerIdFromElement(target);
+            if (compactTimerId) {
+              TimerView.toggleCompact(compactTimerId);
+            }
+            return;
+          }
           // Автообновление срабатывает при каждом клике ДО целевого действия
           AppController.autoUpdate();
-          const target = event.target;
           if (target.tagName === "BUTTON") {
             const timerId = Utils.getTimerIdFromElement(target);
             if (timerId) {
@@ -2222,6 +2261,7 @@
         static handleTimerRemoved(timer) {
           const elem = AppState.getTimerElement(timer.id);
           if (elem) elem.remove();
+          this.forgetCompactState(timer.id);
           this.updateDisplay();
         }
         static handleTimerUpdated(timer) {
@@ -2258,7 +2298,11 @@
         }
         static createTimerContainer(timer) {
           const timerDiv = document.createElement("div");
-          timerDiv.className = "timer-container";
+          // Компактный режим по умолчанию: карточка создаётся свёрнутой,
+          // если пользователь её ранее не развернул (TimerView.expandedTimers).
+          timerDiv.className = this.isExpanded(timer.id)
+            ? "timer-container"
+            : "timer-container collapsed";
           timerDiv.id = `timer-${timer.id}`;
           return timerDiv;
         }
@@ -2317,6 +2361,12 @@
             return label;
           };
 
+          // 00. Стрелка компактного режима — слева вверху карточки:
+          //     стрелка вниз = «развернуть», стрелка вверх = «свернуть».
+          //     Видна в обоих состояниях (compact-toggle-container).
+          makeContainer("compact-toggle-container compact-visible", [
+            this.createCompactToggle(timer),
+          ]);
           // 0. Для задач, созданных разбиением: строка доли сверху карточки.
           //    Наведение на долю подсвечивает всех сиблингов этого разбиения.
           if (Number.isFinite(timer.splitShare)) {
@@ -2336,21 +2386,21 @@
             shareContainer.appendChild(shareEl);
           }
           // 1. Название задачи
-          makeContainer("name-input-container", [
+          makeContainer("name-input-container compact-visible", [
             makeLabel("Название:"),
             elements.nameInput,
           ]);
           // 2. Пропорции: текущая (вес для плана) и целевая
           makeContainer("proportion-container", [elements.proportionDiv]);
-          makeContainer("target-container", [elements.target]);
+          makeContainer("target-container compact-visible", [elements.target]);
           // 3. Основное время: План / Факт / Осталось / Всего
           makeContainer("planned-display-container", [
             elements.plannedDisplay,
           ]);
-          makeContainer("tracked-display-container", [
+          makeContainer("tracked-display-container compact-visible", [
             elements.trackedDisplay,
           ]);
-          makeContainer("remaining-display-container", [
+          makeContainer("remaining-display-container compact-visible", [
             elements.remainingDisplay,
           ]);
           makeContainer("total-display-container", [elements.totalDisplay]);
@@ -2373,20 +2423,80 @@
           makeContainer("recommendation-display-container", [
             elements.recommendationDisplay,
           ]);
-          makeContainer("priority-display-container", [
+          makeContainer("priority-display-container compact-visible", [
             elements.priorityDisplay,
           ]);
           makeContainer("actual-proportion-container", [
             elements.actualProportionDisplay,
           ]);
           // 6. Управление
-          makeContainer("buttons-container", [
+          makeContainer("buttons-container compact-visible", [
             elements.trackButton,
             elements.resetButton,
             elements.deleteButton,
             elements.updateButton,
             elements.splitButton,
           ]);
+        }
+        // ----------------------------------------------------------
+        //  Компактный режим (свёрнутые карточки по умолчанию).
+        //  Состояние развёрнутости — ТОЛЬКО представление: оно живёт здесь,
+        //  а не в объекте таймера, чтобы не менять «осмысленный снимок»
+        //  облачной синхронизации (meaningfulHash) и не влиять на расчёты.
+        // ----------------------------------------------------------
+        static COMPACT_DOWN = "\u25BC"; // стрелка вниз: карточка свёрнута
+        static COMPACT_UP = "\u25B2"; // стрелка вверх: карточка развёрнута
+        static expandedTimers = new Set();
+        static isExpanded(timerId) {
+          return this.expandedTimers.has(String(timerId));
+        }
+        static createCompactToggle(timer) {
+          const expanded = this.isExpanded(timer.id);
+          return UIFactory.createButton(
+            expanded ? this.COMPACT_UP : this.COMPACT_DOWN,
+            "toggle-compact",
+            {
+              id: `compact-toggle-${timer.id}`,
+              class: "compact-toggle",
+              title: expanded
+                ? "Свернуть карточку"
+                : "Развернуть карточку",
+              "aria-expanded": expanded ? "true" : "false",
+            }
+          );
+        }
+        static applyCompactState(timer) {
+          const timerDiv = AppState.getTimerElement(timer.id);
+          if (!timerDiv) return;
+          const expanded = this.isExpanded(timer.id);
+          timerDiv.classList.toggle("collapsed", !expanded);
+          const toggle = timerDiv.querySelector(
+            '[data-action="toggle-compact"]'
+          );
+          if (toggle) {
+            toggle.textContent = expanded
+              ? this.COMPACT_UP
+              : this.COMPACT_DOWN;
+            toggle.title = expanded
+              ? "Свернуть карточку"
+              : "Развернуть карточку";
+            toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+          }
+        }
+        static toggleCompact(timerId) {
+          if (this.isExpanded(timerId)) {
+            this.expandedTimers.delete(String(timerId));
+          } else {
+            this.expandedTimers.add(String(timerId));
+          }
+          const timer = AppState.findTimerById(timerId);
+          if (timer) {
+            this.applyCompactState(timer);
+          }
+          return this.isExpanded(timerId);
+        }
+        static forgetCompactState(timerId) {
+          this.expandedTimers.delete(String(timerId));
         }
         static createNameInput(timer) {
           return UIFactory.createInput("text", {

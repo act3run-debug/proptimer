@@ -352,3 +352,54 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
 - **jsdom ПРИМЕНЯЕТ `<style>` и считает каскад**: проверено зондом — `getComputedStyle(...).display`
   возвращает `none` для `> *:not(.keep)` и для `button:not([data-action="track"])`.
   ⇒ можно писать СИЛЬНЫЕ тесты компактного режима через getComputedStyle, а не только по классам.
+
+## 27. Журнал задачи 3 (действия 127–140)
+- 127: патч index.html python3-скриптом (/tmp/patch_compact.py, 8 блоков правок, все якоря с проверкой
+  числа совпадений, «всё-или-ничего»). Файл 223 572 → 229 460 байт, 4896 строк, lone LF = 0 (CRLF сохранён).
+- 128: vm.Script — синтаксис OK; `npm test` → 103/105, упали ровно те 2, что предсказаны в разделе 24
+  (regression:583 className и integration:247 APP_VERSION).
+- 129: оба теста поправлены A/B-безопасно: `assert.match(card.className, /^timer-container( collapsed)?$/)`
+  и regex версии `^\d{4}-\d{2}-\d{2}-compact$`.
+- 130–133: изучены harness (createContext/setup/scene/click/cardButton/elementOf), паттерны тестов
+  хранилища и разбиения, CloudSync.meaningfulProjection/snapshotLocal, диспетчер change (name/proportion/
+  target-proportion → handleTargetProportionChange → setTargetProportion + calculateRecommendations).
+- 134: написан tests/compact-mode.test.js — 30 тестов (4 раздела: разметка/CSS, поведение стрелки,
+  работоспособность свёрнутой карточки, жизненный цикл состояния).
+- 135: прогон нового набора — 29/30; единственная ошибка — МОЯ строковая проверка
+  (`data-action === "toggle-compact"` vs реальный код `target.getAttribute("data-action") === "toggle-compact"`).
+- 136: проверка исправлена; ПОЛНЫЙ ПРОГОН `npm test` → **135/135 pass, 0 fail, ~21,6 с** (105 старых + 30 новых).
+- 137: A/B против a3188dc (исходный index.html, 223 572 байта): regression **51/51 pass** (ослабление
+  className A/B-безопасно, регрессий нет); compact-mode **1 pass / 29 fail** ⇒ новые тесты не тривиальны.
+- 138: единственный прошедший на старом коде тест — «Приоритет виден и заполняется…» (он про работоспособность
+  поля, а не про сворачивание).
+- 139: обновлён tests/README.md (135 тестов, новая строка в таблице состава, раздел «A/B для компактного режима»).
+- 140: обновление conspect.md + commit/push.
+
+## 28. Что именно изменилось в index.html (задача 3)
+1. CSS (после блока `.buttons-container { margin: 6px 0; }`): `.compact-toggle-container`, `.compact-toggle`,
+   `.timer-container.collapsed { padding: 8px 15px; }`,
+   `.timer-container.collapsed > *:not(.compact-visible) { display: none; }`,
+   `.timer-container.collapsed .buttons-container button:not([data-action="track"]) { display: none; }`.
+2. `TimerView.appendTimerElements`: ПЕРВЫМ дочерним элементом карточки добавлен
+   `makeContainer("compact-toggle-container compact-visible", [this.createCompactToggle(timer)])`;
+   класс `compact-visible` добавлен 6 строкам: name-input, target, tracked-display, remaining-display,
+   priority-display, buttons.
+3. `TimerView.createTimerContainer`: `className = isExpanded(id) ? "timer-container" : "timer-container collapsed"`.
+4. Новые члены `TimerView`: `COMPACT_DOWN="\u25BC"`, `COMPACT_UP="\u25B2"`, `expandedTimers=new Set()`,
+   `isExpanded`, `createCompactToggle` (id `compact-toggle-<id>`, data-action `toggle-compact`,
+   class `compact-toggle`, title «Развернуть/Свернуть карточку», aria-expanded),
+   `applyCompactState`, `toggleCompact` (возвращает новое состояние), `forgetCompactState`.
+5. `TimerView.handleTimerRemoved` → `forgetCompactState(timer.id)` (Set не растёт мусором).
+6. `TimerController.handleTimersContainerClick`: ветка стрелки ОБРАБАТЫВАЕТСЯ ДО `AppController.autoUpdate()`
+   и делает `return` — чисто визуальное действие не пересчитывает планы и не дёргает облако.
+7. `APP_VERSION`: "2026-10-31-away-auto" → "2026-10-31-compact".
+Семантика: элементы НЕ удаляются из DOM (в них продолжают писать updateDisplay/updateTimer*),
+состояние развёрнутости — только представление (в модели таймера и в облачном снимке не появляется).
+
+## 29. Находки (задача 3)
+- jsdom считает каскад из `<style>`: `getComputedStyle(...).display === "none"` работает и для
+  `> *:not(.compact-visible)`, и для `button:not([data-action="track"])` ⇒ тесты проверяют РЕАЛЬНУЮ видимость.
+- НО: jsdom не наследует `display:none` от предка — для вложенных элементов (кнопки «Применить», поля ввода)
+  в тесте нужен обход предков (хелпер `shown()`), а не `getComputedStyle` одного элемента.
+- `updateTimerTrackButton` ищет кнопку по textContent «Старт»/«Пауза» среди всех button карточки —
+  текст стрелки обязан отличаться (взяты ▼/▲), иначе надпись перезаписывалась бы.

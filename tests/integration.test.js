@@ -248,8 +248,8 @@ test("облачная конфигурация и версия приложен
   const ctx = setup();
   assert.match(
     ctx.APP_VERSION,
-    /^\d{4}-\d{2}-\d{2}-away-auto$/,
-    "метка версии отражает перевод «Отошёл» в автоматический режим"
+    /^\d{4}-\d{2}-\d{2}-compact$/,
+    "метка версии отражает компактный режим карточек по умолчанию"
   );
   assert.match(ctx.CLOUD_CONFIG.url, /^https:\/\/.+\.supabase\.co$/);
   assert.ok(ctx.CLOUD_CONFIG.anonKey.startsWith("sb_publishable_"));
