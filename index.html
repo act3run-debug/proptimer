@@ -57,9 +57,8 @@
         margin: 10px;
         padding: 5px;
       }
-      button.active-away {
-        background-color: #555 !important;
-      }
+      /* Оформление убранной кнопки «Отошёл» больше не нужно: away-режим
+         включается сам (TimeManager.syncAutoAway), кнопки в панели нет. */
       #globalControls {
         position: fixed;
         top: 0;
@@ -226,7 +225,9 @@
         <span id="tzHint"></span>
       </label>
       <button data-action="add-timer">+ Добавить таймер</button>
-      <button id="awayButton" data-action="toggle-away">Отошёл</button>
+      <!-- Кнопка «Отошёл» убрана из интерфейса: её механизм (away-режим)
+           теперь включается автоматически, пока не идёт отсчёт ни одного
+           таймера (TimeManager.syncAutoAway). -->
       <button
         id="tzHolderButton"
         data-action="tz-holder"
@@ -263,7 +264,7 @@
       //  приложение работает в чисто локальном режиме (как раньше).
       // ============================================================
       // Версия приложения — видна в окне облака (контроль деплоя)
-      const APP_VERSION = "2026-10-29-tz4";
+      const APP_VERSION = "2026-10-31-away-auto";
       const CLOUD_CONFIG = {
         url: "https://iqvqjiwjizlzronudgui.supabase.co",
         anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
@@ -396,8 +397,6 @@
             } else if (action === "create-in-group") {
               MenuController.hide();
               GroupTaskController.openModal();
-            } else if (action === "toggle-away") {
-              AppController.toggleAway();
             } else if (action === "save") {
               AppController.saveTimers();
             } else if (action === "export") {
@@ -655,11 +654,6 @@
         static updateTimer(timer) {
           TimerController.updateTimer(timer);
         }
-        static toggleAway() {
-          TimeManager.toggleAway();
-          // «Отошёл» останавливает трекинг — это управляющее действие
-          CloudSync.bumpControl();
-        }
         static calculateRecommendations() {
           SessionManager.checkAndPerformReset();
           CalculationService.calculateRecommendedProportions(
@@ -697,22 +691,29 @@
           TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
           AppController.calculateRecommendations();
         }
+        static refreshDistribution() {
+          // Пересчёт распределения от настенного времени: планы всех задач,
+          // рекомендации, приоритеты. Общая часть пользовательского и
+          // «служебного» (ролловер сессии) автообновления.
+          this.updateAllTimers();
+          this.applyRecommendations();
+        }
         static autoUpdate() {
-          // Единая точка автообновления. Триггеры:
+          // Единая точка ПОЛЬЗОВАТЕЛЬСКОГО автообновления. Триггеры:
           //  - любой пользовательский клик (до целевого действия);
-          //  - получение/потеря фокуса поля ввода;
-          //  - наступление «Конца» (ролловер сессии).
+          //  - получение/потеря фокуса поля ввода.
           SessionManager.checkAndPerformReset();
           // Пользовательское действие (клик/фокус) — немедленная синхронизация
           CloudSync.interactiveSync();
-          if (AppState.isAwayModeActive()) {
-            // В режиме «Отошёл» распределение заморожено: планы уменьшает
-            // handleAwayMode, а пересчёт от настенного времени стёр бы
-            // эти вычитания.
-            return;
-          }
-          this.updateAllTimers();
-          this.applyRecommendations();
+          // Away-режим теперь включён постоянно, пока не идёт отсчёт ни
+          // одного таймера (TimeManager.syncAutoAway), поэтому заморозка
+          // распределения здесь НЕ применяется: иначе правки «Конца», весов и
+          // целей, добавление и удаление задач перестали бы отображаться.
+          // Заморозка нужна только фоновому тику — она живёт там, где тик
+          // пересчитывает распределение (CalculationService.updateCalculations
+          // → ролловер сессии): в away-режиме планы уменьшает handleAwayMode,
+          // а пересчёт от настенного времени стёр бы эти вычитания.
+          this.refreshDistribution();
         }
         static saveTimers() {
           StorageService.saveTimersToLocalStorage();
@@ -844,9 +845,6 @@
         },
         getTimerTargetProportionElement(timerId) {
           return document.getElementById(`target-proportion-${timerId}`);
-        },
-        getAwayButtonElement() {
-          return document.getElementById("awayButton");
         },
         getTimersContainerElement() {
           return document.getElementById("timersContainer");
@@ -1432,11 +1430,11 @@
             CloudSync.clearTrackingOwner();
             CalculationService.updateCalculations();
           } else {
-            if (AppState.isAwayModeActive()) {
-              AppState.setAwayModeActive(false);
-            }
+            // Away-режим снимается автоматически: пошёл отсчёт — значит
+            // пользователь не «отошёл» (TimeManager.syncAutoAway).
             this.stopAllOtherTimers(timers, id);
             this.startTracking(timer);
+            TimeManager.syncAutoAway();
             // Устройство, нажавшее «Старт», — владелец сессии: оно шлёт
             // чекпоинты, а зеркала по владельцу определяют живость трекинга
             localStorage.setItem("trackingOwnerDevice", CloudSync.deviceId());
@@ -1448,10 +1446,16 @@
         }
         static stopTracking(timer) {
           TimerModel.stopTracking(timer);
+          TimeManager.syncAutoAway(); // отсчёт остановлен — снова «отошёл»
           AppState.notify("timerStateChanged", timer);
         }
         static stopAllOtherTimers(timers, currentTimerId) {
-          CalculationService.updateCalculations();
+          // Пересчёт здесь не нужен: toggleTracking сразу после остановки
+          // остальных задач вызывает CalculationService.updateCalculations()
+          // и CloudSync.bumpControl() (который тоже сохраняет и пересчитывает
+          // состояние). Лишний вложенный тик только дёргал подписчиков и
+          // успевал кратковременно взвести авто-«Отошёл» между остановкой
+          // старой задачи и стартом новой.
           timers.forEach(t => {
             if (t.id !== currentTimerId && t.isTracking) {
               TimerModel.stopTracking(t);
@@ -2112,12 +2116,23 @@
           AppState.setLastUpdateTime(now);
           const sessionRolled = TimeManager.updateGlobalEndTime(now);
           if (sessionRolled) {
-            // Наступил «Конец»: автообновление планов и рекомендаций
-            // для новой сессии (бывшие кнопки «Обновить всё» и
-            // «Рекомендация» + «Применить рекомендацию»).
-            AppController.autoUpdate();
+            // Наступил «Конец»: планы и рекомендации новой сессии
+            // пересчитываются безусловно (бывшие кнопки «Обновить всё» и
+            // «Рекомендация» + «Применить рекомендацию»). Это ЕДИНСТВЕННЫЙ
+            // пересчёт распределения из фонового тика — раньше он шёл через
+            // autoUpdate(), но теперь away-режим в простое включён постоянно,
+            // и старая заморозка оставила бы новую сессию со вчерашними
+            // планами. В остальном распределение в простое «заморожено»:
+            // планы уменьшает handleAwayMode (см. autoUpdate).
+            AppController.refreshDistribution();
           }
+          // Авто-«Отошёл»: пока отсчёт не идёт, взводим away-режим (до
+          // начисления времени активного таймера — порядок важен).
+          TimeManager.syncAutoAway();
           this.updateActiveTimers(delta);
+          // Пауза могла случиться в этом же тике (в том числе авто-пауза
+          // «мёртвого владельца») — проверяем взвод ещё раз.
+          TimeManager.syncAutoAway();
           TimeManager.handleAwayMode(now, delta);
           TimeManager.handleAutoAwayMode(delta);
           AppState.notify("calculationsUpdated");
@@ -2179,10 +2194,6 @@
             this.handleTimersChanged.bind(this)
           );
           AppState.subscribe(
-            "awayModeChanged",
-            this.handleAwayModeChanged.bind(this)
-          );
-          AppState.subscribe(
             "displayNeedsUpdate",
             this.updateDisplay.bind(this)
           );
@@ -2223,9 +2234,6 @@
         }
         static handleTimersChanged(timers) {
           this.updateDisplay();
-        }
-        static handleAwayModeChanged(isActive) {
-          this.updateAwayButton();
         }
         static handleCalculationsUpdated() {
           const timers = AppState.getTimers();
@@ -2583,18 +2591,6 @@
             }
           }
         }
-        static updateAwayButton() {
-          const awayBtn = AppState.getAwayButtonElement();
-          if (awayBtn) {
-            const awayModeActive = AppState.isAwayModeActive();
-            awayBtn.disabled = awayModeActive;
-            if (awayModeActive) {
-              awayBtn.classList.add("active-away");
-            } else {
-              awayBtn.classList.remove("active-away");
-            }
-          }
-        }
         static updateDisplay() {
           const timers = AppState.getTimers();
           timers.forEach(timer => {
@@ -2605,7 +2601,6 @@
             this.updateTimerRemainingTime(timer);
             this.updateTimerTrackButton(timer);
           });
-          this.updateAwayButton();
         }
         static updateAllTimerProportions() {
           const timers = AppState.getTimers();
@@ -2774,32 +2769,76 @@
             AppState.notify("displayNeedsUpdate");
           }
         }
-        static toggleAway() {
-          const newAwayModeActive = !AppState.isAwayModeActive();
-          AppState.setAwayModeActive(newAwayModeActive);
-          if (newAwayModeActive) {
-            this.activateAwayMode();
-          }
-          AppState.notify("displayNeedsUpdate");
+        // ----------------------------------------------------------
+        //  Авто-режим «Отошёл»
+        //  Кнопки «Отошёл» в интерфейсе больше нет: away-режим включён
+        //  ВСЕГДА, пока не идёт отсчёт ни одного таймера, и выключается на
+        //  время отсчёта. Содержательно это ровно прежнее поведение кнопки:
+        //  время простоя вычитается из планов всех задач пропорционально их
+        //  весам (handleAwayMode), а фоновый пересчёт распределения от
+        //  настенного времени на это время заморожен: иначе каждый тик
+        //  возвращал бы планам полное значение и вычитание обнулялось.
+        //  Пользовательские действия (клик/фокус поля) пересчёт ВЫПОЛНЯЮТ —
+        //  см. AppController.autoUpdate.
+        // ----------------------------------------------------------
+        static isAnyTracking() {
+          return AppState.getTimers().some(t => t.isTracking);
         }
-        static activateAwayMode() {
-          AppState.setAwayStartTime(new Date(CloudSync.serverNow()));
+        static syncAutoAway() {
+          // Идемпотентная синхронизация away-режима с фактом отсчёта.
+          // Вызывается из фонового тика и из точек, где трекинг
+          // начинается/останавливается.
+          if (this.isAnyTracking()) {
+            this.deactivateAway();
+          } else {
+            this.armAway();
+          }
+        }
+        static armAway() {
+          // Взвод только по ПЕРЕХОДУ в простой: awayStartTime — точка отсчёта
+          // для handleAwayMode, и её повторная установка во время простоя
+          // обнулила бы уже накопленное время (а установка задним числом
+          // списала бы время простоя дважды).
+          if (AppState.isAwayModeActive() && AppState.getAwayStartTime()) {
+            return false;
+          }
           const timers = AppState.getTimers();
-          const updatedTimers = [];
+          const stopped = [];
           timers.forEach(t => {
+            // Защита: away-режим и идущий отсчёт несовместимы. На практике
+            // сюда не попадают — syncAutoAway взводит режим только при
+            // отсутствии трекинга.
             if (t.isTracking) {
-              const currentTime = new Date();
-              const timeDiff = (currentTime - t.startTime) / 1000;
               TimerModel.stopTracking(t);
-              updatedTimers.push(t);
+              stopped.push(t);
             }
           });
-          updatedTimers.forEach(t => {
+          stopped.forEach(t => {
             AppState.notify("timerStateChanged", t);
           });
+          AppState.setAwayStartTime(new Date(CloudSync.serverNow()));
+          AppState.setAwayModeActive(true);
+          return true;
+        }
+        static deactivateAway() {
+          // Пошёл отсчёт: простой закончился. Точку отсчёта сбрасываем, чтобы
+          // следующая пауза начала накопление заново (время самого отсчёта
+          // учитывает трекинг, а не away-вычитание).
+          if (!AppState.isAwayModeActive() && !AppState.getAwayStartTime()) {
+            return false;
+          }
+          AppState.setAwayModeActive(false);
+          AppState.setAwayStartTime(null);
+          return true;
         }
         static handleAwayMode(now, delta) {
-          if (AppState.isAwayModeActive() && AppState.getAwayStartTime()) {
+          // Прямое включение возможно только когда отсчёт не идёт (иначе
+          // планы уменьшались бы параллельно с растущим «Фактом»).
+          if (
+            AppState.isAwayModeActive() &&
+            AppState.getAwayStartTime() &&
+            !this.isAnyTracking()
+          ) {
             const elapsed = (now - AppState.getAwayStartTime()) / 1000;
             const timers = AppState.getTimers();
             const totalProportion = timers.reduce(

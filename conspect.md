@@ -129,3 +129,75 @@ NTP-подобная калибровка часов по серверному n
 Замечания: в публичном репо зашиты Supabase URL и publishable key (доступ к записи даёт только знание ключ-фразы,
 но RLS/политики сервера не видны — supabase_setup.sql и DEPLOY.md в репо отсутствуют); внешний CDN для Realtime;
 APP_VERSION="2026-10-29-tz4"; title «Пропорциональный таймер», заголовок UI «physus».
+---
+
+# ЗАДАЧА 2 — авто-режим «Отошёл» (тот же агент, 2026-10-31)
+
+## 10. Формулировка задачи 2
+«Тут есть кнопка "Отошёл". Сделай так, чтобы её механизм запускался автоматически и работал всегда,
+пока не идёт отчёт любого из таймеров. Саму кнопку визуально убери. Надеюсь, эта реализация не
+противоречит общей логике программы. Обильно покрой это автотестами.»
+Критерии: (а) away-механизм работает сам, пока ни один таймер не считает; (б) кнопки в UI нет;
+(в) не противоречит общей логике; (г) много автотестов.
+
+## 11. Журнал задачи 2 (нумерация продолжается: действия 37–94)
+- 37–40: conspect, разведка, grep-карта всех упоминаний away (кнопка, CSS, диспетчер, TimeManager,
+  handleAwayMode/handleAutoAwayMode, autoUpdate-заморозка, updateAwayButton, подписка awayModeChanged).
+- 41: резервная копия index.html → /tmp/index.orig.html (и /tmp/orig/index.html для A/B-прогонов).
+- 42–48: правки разметки/CSS: удалены <button id="awayButton"> и правило button.active-away, вместо них
+  пояснительные комментарии; ветка "toggle-away" в диспетчере и AppController.toggleAway удалены.
+- 49–55: ядро — TimeManager.isAnyTracking()/syncAutoAway()/armAway()/deactivateAway(); вызовы syncAutoAway
+  в тике ДО и ПОСЛЕ updateActiveTimers, в toggleTracking (старт) и stopTracking; guard !isAnyTracking()
+  в handleAwayMode; handleAutoAwayMode не тронут (он про переработку активного таймера, не про кнопку).
+- 56–60: распределение — AppController.refreshDistribution() (общая часть), autoUpdate() больше НЕ морозит
+  пересчёт (иначе правки «Конца»/весов/целей не отображались бы при постоянно включённом away);
+  passiveAutoUpdate удалён; в тике на ролловере сессии — refreshDistribution() безусловно.
+- 61: stopAllOtherTimers больше не вызывает вложенный updateCalculations() (устраняет кратковременный
+  «взвод» away между остановкой старой задачи и стартом новой).
+- 62: APP_VERSION = "2026-10-31-away-auto".
+- 63–70: инфраструктура тестов: package.json (jsdom ^26.1.0, test/test:verbose), package-lock.json,
+  .gitignore (node_modules и пр.), tests/harness.js (jsdom + подмена Date.now/setInterval, LIVE-реестр
+  окон и closeAll() в after(), иначе node --test виснет).
+- 71–86: tests/auto-away.test.js — 46 тестов; прогоны 1–16 (отладка ожиданий под реальную механику приложения).
+- 87: tests/regression.test.js — 51 тест на всю остальную логику (намеренно НЕ зависит от auto-away,
+  чтобы прогоняться и на исходном коде).
+- 88: 6 дефектов самих тестов исправлены python3-патчем (createTaskInGroup→autoUpdate перезаписывает веса;
+  метка «Приоритет» появляется только после calculateRecommendations(); Utils.generateId коллидирует при
+  замороженных часах; querySelector по id с точкой; двойной init() в setup(); арифметика ролловера).
+- 89: conspect обновлён; прогон 19 = 104/105.
+- 90: tests/integration.test.js — 8 тестов (сценарий «день из жизни» + целостность index.html: vm.Script,
+  24 класса, CRLF, маркеры, облачная конфигурация, версия); прогон 20 = **105/105 GREEN**.
+- 91: A/B-прогоны на ИСХОДНОМ коде (INDEX_HTML=/tmp/orig/index.html): regression 51/51 pass,
+  auto-away 7 pass/39 fail, integration 3 pass/5 fail ⇒ регрессий нет, новые тесты не тривиальны.
+- 92: проверки версии вынесены в integration.test.js, regression-тесты сделаны версионно-независимыми;
+  перепроверка 105/105 (новый код) и 51/51 (исходный).
+- 93: tests/README.md — как запускать и как делать A/B.
+- 94: дымовая проверка через python3 -m http.server 8080: страница отдаётся байт-в-байт (223572 байта),
+  в панели 8 кнопок, awayButton отсутствует; curl в песочнице нет — только urllib.
+
+## 12. Что именно изменилось в index.html (сводка)
+- DOM: кнопки «Отошёл» нет; CSS-класс active-away удалён; состояние away и уведомления сохранены.
+- TimeManager.syncAutoAway() — идемпотентно: идёт отсчёт → deactivateAway(); иначе → armAway()
+  (только по ПЕРЕХОДУ в простой, чтобы не сбрасывать awayStartTime и не списывать простой дважды).
+- handleAwayMode: добавлен guard !isAnyTracking() — away-вычитание и растущий «Факт» несовместимы.
+- autoUpdate(): checkAndPerformReset + interactiveSync + refreshDistribution (без заморозки).
+- Тик (200 мс): syncAutoAway до и после updateActiveTimers; на ролловере сессии — refreshDistribution.
+- Итог по семантике: прежнее поведение кнопки («время простоя вычитается из планов пропорционально
+  весам, пересчёт от настенного времени заморожен») теперь включено постоянно в простое и само
+  выключается на время отсчёта.
+
+## 13. Тесты (все зелёные, ~16 с)
+- tests/auto-away.test.js — 46: взвод/снятие, затухание планов, заморозка, ролловер, перезагрузка,
+  авто-пауза «мёртвого владельца», отсутствие кнопки.
+- tests/regression.test.js — 51: расчёты, рекомендации, приоритеты, группы, разбиение, удаление,
+  ручной ввод, сессия/«Конец», облако, часовой пояс.
+- tests/integration.test.js — 8: сценарий полного дня + целостность файла.
+- Запуск: `npm test` (или `node --test tests/`); A/B: `INDEX_HTML=/путь/к/старому/index.html node --test tests/regression.test.js`.
+
+## 14. Для следующего агента (задача 2)
+- node_modules НЕ в git (.gitignore); перед тестами — `npm install` (jsdom 26.1.0; jsdom 30 несовместим с Node 20.20.2).
+- edit_file пишет LF в CRLF-файл → правки index.html делать python3-скриптами (работа в \n, возврат \r\n,
+  проверка точного числа совпадений, всё-или-ничего).
+- Intl.DateTimeFormat игнорирует подменный Date.now → T0 в тестах привязан к РЕАЛЬНОЙ дате; «Конец» задавать hhmm(...).
+- Оригинальная копия для A/B: /tmp/index.orig.html (вне workspace, между сессиями не живёт — при необходимости
+  брать `git show 504ffe7:index.html`).
