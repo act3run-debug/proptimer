@@ -202,3 +202,76 @@ APP_VERSION="2026-10-29-tz4"; title «Пропорциональный тайм�
 - Оригинальная копия для A/B: /tmp/index.orig.html (вне workspace, между сессиями не живёт — при необходимости
   брать `git show 504ffe7:index.html`).
 - 95: коммит 7381241 (10 файлов) запушен в origin/main: 504ffe7..7381241. Рабочее дерево чистое.
+
+---
+
+# СЕССИЯ 2 — повторный вопрос «что делает этот код?» (агент №2, 2026-10-31)
+
+## 15. Задача сессии 2
+Пользователь снова прислал uploads/conspect md instructions.md + ссылку
+`https://github.com/act3run-debug/proptimer/index.html` (это не валидный URL репо — `/index.html`
+трактуется как указание на файл) и вопрос: «что делает этот код?». Изменений кода не запрашивалось.
+По правилу 6: conspect.md предыдущего агента найден → прочитан, ключевые пункты перепроверены ЖИВЬЁМ.
+
+## 16. Текущая конфигурация (перепроверено живьём, 2026-10-31)
+- HEAD = a3188dc (main), до него 7381241 «Авто-режим "Отошёл"» и 504ffe7/744d62a (conspect).
+- index.html: 223 572 байта, 4786 строк CRLF (было 4747 до задачи 2 → +40 строк).
+- APP_VERSION = "2026-10-31-away-auto" (подтверждено).
+- `awayButton` в файле ОТСУТСТВУЕТ (0 вхождений); `syncAutoAway` — 10 вхождений, `isAnyTracking` — 3.
+  ⇒ вывод задачи 2 (кнопка «Отошёл» убрана, away-режим автоматический) подтверждён по факту.
+- 28 top-level классов/констант (в т.ч. RealtimeClient, APP/CLOUD-конфиги); data-action в панели:
+  add-timer, tz-holder, save, export, import, cloud, menu, create-in-group (toggle-away НЕТ).
+- Состав репо: index.html, conspect.md, package.json, package-lock.json, .gitignore, tests/
+  (README.md, harness.js, auto-away.test.js, regression.test.js, integration.test.js).
+- **Тесты прогнаны в этой сессии: `npm install` + `npm test` → 105/105 pass, 0 fail, ~16,2 с.** (Node v20.20.2, npm 10.8.2)
+- Точечно сверены формулы с кодом:
+  • TimeCalculator.getTotalTime (стр. 1947): now = CloudSync.serverNow(); «Конец» не задан → до полуночи
+    в зоне TimeZoneHolder; globalEndTime <= now → +1 сутки; иначе (end − now)/1000.
+  • ProportionCalculator.calculateInitialRecommendations (стр. 1850): base = max(originalDailyTotal, dailyTotal);
+    targetTime = targetProportion × (Σbase + remaining); necessaryTime = max(targetTime − base, 0);
+    isOverperformed = trackedSeconds > plannedSeconds.
+  • distributeRemainingTime: freeTime = remaining − Σnecessary (по неперевыполненным) → раздаётся
+    пропорционально targetProportion; normalizeRecommendations: divisor = max(Σnecessary, remaining),
+    перевыполненным → recommendedProportion = 0.
+  • TimeManager.armAway/deactivateAway (стр. 2797/2823): взвод только по ПЕРЕХОДУ в простой,
+    awayStartTime = serverNow(); handleAwayMode с guard !isAnyTracking().
+- Мелкая находка (не баг): в calculateInitialRecommendations объявлена неиспользуемая
+  `currentTargetTime = (proportion/totalWeight) × remainingTime` — мёртвая переменная.
+
+## 17. Журнал сессии 2 (нумерация продолжается: 96–112)
+- 96: прочитан uploads/conspect md instructions.md (7745 байт) — правила журнала + git-политика.
+- 97: разведка среды: bash-cwd = workspace; `/home/user` в bash НЕТ; curl/wget НЕТ; git 2.39.5; python3 есть.
+- 98: GitHub API без токена: репо public, main, HTML, size 316, created 2026-10-27, pushed 2026-10-31T13:59Z.
+- 99: создан черновик conspect.md (свой) — позже слит с журналом прошлого агента.
+- 100: git clone (без токена, репо публичное) → proptimer/; в репо УЖЕ есть conspect.md (31 КБ) ⇒ прошлый агент не потерял работу.
+- 101: инвентаризация: package.json (jsdom ^26, `node --test tests/`), .gitignore, tests/ (4 файла), git log (10 коммитов).
+- 102: репо перенесён в корень workspace (index.html и др. — в корне), черновик переименован в conspect_prev.md.
+- 103: grep-оглавление чужого conspect.md (разделы 1–14), чтение целиком — история НЕ переписывается.
+- 104: живая перепроверка index.html (байты/строки/CRLF, title, APP_VERSION, awayButton, классы, data-action).
+- 105: ОБНОВЛЕНИЕ conspect.md (10-е действие сессии).
+- 106: `npm install` — OK (jsdom 26.1.0 и зависимости встали; node_modules в .gitignore).
+- 107: `npm test` — **105/105 GREEN, 16,15 с** (подтверждение заявленного прошлым агентом результата).
+- 108: grep syncAutoAway/isAnyTracking/armAway/deactivateAway — 10/3/… вхождений, вызовы в тике и в toggleTracking/stopTracking.
+- 109: чтение TimeManager 2780–2850 (auto-away механика) — совпадает с описанием в разделе 12.
+- 110: чтение ProportionCalculator 1840–1935 (рекомендации) и TimeCalculator.getTotalTime 1947–1961 — формулы подтверждены.
+- 111: чтение шапки/CSS 1–70 и разметки панели 215–265: title «Пропорциональный таймер», UI-заголовок «physus»,
+      8 кнопок панели, комментарии о том, что кнопка «Отошёл» убрана намеренно.
+- 112: слияние журналов в один conspect.md, git-настройка, pull --rebase, commit + push (см. раздел 19).
+
+## 18. Решения и открытые вопросы (сессия 2)
+- Решено: каталог `uploads/` (инструкция пользователя) НЕ коммитить в публичное репо — исключён через
+  локальный `.git/info/exclude` (в сам .gitignore репо не писал, чтобы не менять чужой файл).
+- Решено: `node_modules/` не коммитится (.gitignore уже покрывает).
+- Решено: токен пользователя в conspect.md и в историю НЕ записан; использован только через
+  `~/.git-credentials` (chmod 600, вне снимка workspace) для push.
+- ВОПРОС ПОЛЬЗОВАТЕЛЮ (важно, не блокирует): PAT прислан открытым текстом в чат → его следует
+  отозвать/перевыпустить в GitHub → Settings → Developer settings → Fine-grained tokens.
+- Открытый вопрос: нужен ли только разбор или ещё и правки кода? (пока дан только разбор)
+
+## 19. Итог сессии 2
+Ответ пользователю: код — однофайловое SPA «Пропорциональный таймер» (physus), планировщик времени,
+делящий остаток дня до «Конца» между задачами по весам и непрерывно пересчитывающий план/факт/рекомендацию/
+приоритет; с localStorage-хранилищем, экспортом/импортом JSON, мультиустройственной синхронизацией через
+Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-подобной калибровкой часов, «носителем часового пояса»
+и автоматическим away-режимом. Подробности — раздел 9 (разбор) и разделы 10–14 (задача 2).
+Все 105 автотестов зелёные на текущем HEAD a3188dc.
