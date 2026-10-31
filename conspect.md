@@ -275,3 +275,80 @@ APP_VERSION="2026-10-29-tz4"; title «Пропорциональный тайм�
 Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-подобной калибровкой часов, «носителем часового пояса»
 и автоматическим away-режимом. Подробности — раздел 9 (разбор) и разделы 10–14 (задача 2).
 Все 105 автотестов зелёные на текущем HEAD a3188dc.
+
+---
+
+# ЗАДАЧА 3 — «Компактный режим по умолчанию» (агент №2, 2026-10-31)
+
+## 20. Формулировка задачи 3
+Таймеры по умолчанию «свёрнуты» (карточки слишком высокие по оси Y). В свёрнутом виде показывать ТОЛЬКО:
+Название, Целевая пропорция, Факт, Осталось, Приоритет + кнопка Старт/Пауза.
+Слева вверху над каждой карточкой — стрелка вниз (развернуть); в развёрнутом виде — стрелка вверх (свернуть).
+Покрыть своими регрессионными тестами; существующие 105 тестов не должны сломаться.
+
+## 21. План задачи 3
+- [ ] 113: conspect — зафиксировать задачу (этот блок).
+- [ ] 114–118: прочитать TimerView.addTimerElement / updateDisplay / CSS карточки / EventService / tests+harness.
+- [ ] 119: резервная копия index.html → /tmp/index.before-compact.html (для A/B).
+- [ ] 120+: правки python3-скриптами (файл CRLF!): CSS + разметка карточки + логика toggle + версия.
+- [ ] далее: прогон 105 старых тестов, написание tests/compact-mode.test.js, A/B, conspect, commit+push.
+
+## 22. Решения по архитектуре (предварительно)
+- НЕ удалять элементы из DOM при сворачивании — только CSS-класс `.collapsed` на контейнере карточки,
+  иначе TimerView.updateDisplay/updateTimer* (пишут в DOM по id) и облачный sync/тесты сломаются.
+- Состояние свёрнутости хранить в TimerView (Map/Set), НЕ в объекте таймера AppState — чтобы не менять
+  meaningfulHash/снимок облака и не ломать тесты, сравнивающие структуру таймера.
+- Кнопка-стрелка — отдельный элемент с data-action="toggle-compact" (единое делегирование EventService).
+
+## 23. Разведка задачи 3 (действия 114–126) — факты из кода
+- Карточку строит `TimerView.appendTimerElements` (стр. ~2300): `makeContainer(className, children)`
+  создаёт div-строки в порядке: [split-share-container] → name-input-container → proportion-container →
+  target-container → planned-display-container → tracked-display-container → remaining-display-container →
+  total-display-container → tracked-inputs-container → total-inputs-container →
+  recommendation-display-container → priority-display-container → actual-proportion-container → buttons-container.
+- `createTimerContainer` (стр. 2261) — ЕДИНСТВЕННОЕ место, где задаётся `className = "timer-container"`.
+- Кнопки карточки: `UIFactory.createButton(text, actionType, additionalAttributes)` → data-action
+  track/reset/delete/update/split (+ apply-tracked/apply-total в строках ручного ввода).
+- Диспетчер: `TimerController.handleTimersContainerClick` — сначала `AppController.autoUpdate()`,
+  затем if/else по data-action. Делегирование: `EventService.setupEventDelegation` на #timersContainer.
+- `TimerView.updateTimerTrackButton` ищет кнопку по textContent «Старт»/«Пауза» среди ВСЕХ button карточки
+  → стрелка не должна иметь такой текст (берём «\u25BC»/«\u25B2» — безопасно).
+- `AppState.getTimerElement(id)` = `#timer-<id>`; подсветка сиблингов — `classList.toggle("sibling-highlight")`
+  (не перетирает className → наш класс `collapsed` выживет).
+- APP_VERSION на стр. 267; показывается в облачном окне (стр. 4568).
+
+## 24. Ограничения из существующих тестов (что нельзя ломать)
+- `regression.test.js:583` — `assert.equal(card.className, "timer-container")` ⇒ ЕДИНСТВЕННАЯ ломкая
+  проверка. Ослабляю A/B-безопасно (regex `^timer-container( collapsed)?$`), чтобы тест проходил
+  и на старом, и на новом коде (regression-набор обязан оставаться версионно-независимым).
+- `auto-away.test.js:850` — в CSS не должно быть строки `active-away` (не добавляю).
+- `auto-away.test.js:858` — в карточке обязаны остаться data-action track/reset/delete/update/split
+  ⇒ НЕ удаляем элементы из DOM, только прячем через CSS.
+- `integration.test.js:247` — `APP_VERSION` проверяется regex'ом `^\d{4}-\d{2}-\d{2}-away-auto$`
+  ⇒ при смене версии правим и этот тест (он и так feature-specific).
+- `integration.test.js:216` — файл ЦЕЛИКОМ в CRLF ⇒ правки только python3-скриптом с возвратом \r\n.
+
+## 25. Проект решения (compact mode)
+- CSS: `.timer-container.collapsed > *:not(.compact-visible) { display: none; }` +
+  `.timer-container.collapsed .buttons-container button:not([data-action="track"]) { display: none; }` +
+  стили `.compact-toggle` и уменьшенный padding свёрнутой карточки.
+- Класс `compact-visible` вешается на 6 строк: name-input-container, target-container,
+  tracked-display-container, remaining-display-container, priority-display-container, buttons-container
+  (+ сам контейнер стрелки). Всё остальное (в т.ч. split-share, proportion, planned, total, ручной ввод,
+  рекомендация, фактическая пропорция) в свёрнутом виде скрыто — буквально по ТЗ («только»).
+- Стрелка: `makeContainer("compact-toggle-container compact-visible", [createCompactToggle(timer)])` —
+  ПЕРВЫМ дочерним элементом карточки (слева вверху). id `compact-toggle-<id>`, data-action
+  `toggle-compact`, текст ▼/▲, title «Развернуть/Свернуть карточку», aria-expanded.
+- Состояние: `TimerView.expandedTimers = new Set()` (только представление, НЕ в объекте таймера →
+  снимок облака/meaningfulHash не меняются). По умолчанию пусто ⇒ все карточки свёрнуты.
+- Клик по стрелке обрабатывается РАНЬШЕ `autoUpdate()` и делает return — чисто визуальное действие
+  не должно пересчитывать планы/дёргать облако.
+- `handleTimerRemoved` → `forgetCompactState(id)` (не копим мусор в Set).
+- APP_VERSION → "2026-10-31-compact".
+- Резервная копия до правок: /tmp/index.before-compact.html (223 572 байта); для A/B между сессиями —
+  `git show a3188dc:index.html`.
+
+## 26. Находки среды (задача 3)
+- **jsdom ПРИМЕНЯЕТ `<style>` и считает каскад**: проверено зондом — `getComputedStyle(...).display`
+  возвращает `none` для `> *:not(.keep)` и для `button:not([data-action="track"])`.
+  ⇒ можно писать СИЛЬНЫЕ тесты компактного режима через getComputedStyle, а не только по классам.
