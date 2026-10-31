@@ -68,7 +68,9 @@
 - действие 31: GroupTaskController 3018–3123: выбор группы галочками, имя + «доля внутри группы» (0..1, дроби вида 1/4), confirm → AppController.createTaskInGroup.
 - действие 32: git log --stat: 6 коммитов, все правят только index.html (последний 886b52c, 2026-10-29, +205/−50). Других файлов в истории не было.
 - действие 33: TimerView.init/setupEventListeners — подписки на события AppState (timerAdded/Removed/Updated, timersChanged, awayModeChanged, displayNeedsUpdate, timerStateChanged, recommendationsCalculated, calculationsUpdated). ЧТЕНИЕ КОДА ЗАВЕРШЕНО: просмотрены все блоки 1–4747.
-- действие 34: финализация conspect.md, commit+push (этот шаг).
+- действие 34: финализация conspect.md.
+- действие 35: conspect.md скопирован в клон repo/, git pull --rebase (up to date), commit 744d62a, push в origin/main — УСПЕШНО (886b52c..744d62a). Git-политика соблюдена.
+- действие 36: запись о пуше в журнал + push этого обновления.
 
 ## 5. Находки API
 - Supabase: проект https://iqvqjiwjizlzronudgui.supabase.co, в коде зашит publishable (anon) key sb_publishable_da50tn1z… (публичный по замыслу Supabase, но теперь виден в публичном репо).
