@@ -2572,7 +2572,13 @@
                   FolderView.createFolderElement(node);
                 desired.push(el);
                 FolderView.updateFolderElement(node);
-                const childrenHost = FolderView.childrenElement(node.id);
+                // Только что созданная папка ещё не прикреплена к документу,
+                // поэтому getElementById её контейнер детей не находит. Берём
+                // его из самого элемента — иначе содержимое не отрисуется, а
+                // карточки детей будут удалены как «лишние».
+                const childrenHost =
+                  FolderView.childrenElement(node.id) ||
+                  el.querySelector(".folder-children");
                 if (childrenHost) walk(node.children || [], childrenHost);
                 return;
               }

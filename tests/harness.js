@@ -162,6 +162,11 @@ function closeAll() {
   LIVE.clear();
 }
 
+/** Принимает сущность (таймер/узел) или её id — возвращает id. */
+function idOf(x) {
+  return x !== null && typeof x === "object" ? x.id : x;
+}
+
 function createContext(opts = {}) {
   const html = buildHtml(insertPrelude(opts.html || readHtml()));
   const virtualConsole = new VirtualConsole();
@@ -213,9 +218,16 @@ function createContext(opts = {}) {
 
   const app = window.__app;
   if (!app) throw new Error("Код приложения не отдал globalThis.__app");
-  for (const [name, value] of Object.entries(app)) {
-    if (value === null) throw new Error(`Не найден глобальный объект: ${name}`);
+  const missing = Object.entries(app)
+    .filter(([, value]) => value === null)
+    .map(([name]) => name);
+  if (missing.length && process.env.ALLOW_MISSING_GLOBALS !== "1") {
+    throw new Error(`Не найден глобальный объект: ${missing[0]}`);
   }
+  // A/B-режим (ALLOW_MISSING_GLOBALS=1 в паре с INDEX_HTML=<старая версия>):
+  // отсутствующие классы остаются null, и падают только те тесты, которые
+  // действительно проверяют новое поведение. Так видно, что остальное
+  // работает ровно как раньше.
 
   const ctx = {
     dom,
@@ -291,20 +303,23 @@ function createContext(opts = {}) {
       return ctx;
     },
     card(timer) {
-      return app.AppState.getTimerElement(timer.id);
+      return app.AppState.getTimerElement(idOf(timer));
     },
     // --- дерево (папки, доли, перемещения) -----------------------------
     /** id карточки таймера или число — возвращает элемент карточки. */
     cardById(id) {
-      return ctx.document.getElementById(`timer-${id}`);
+      return ctx.document.getElementById(`timer-${idOf(id)}`);
     },
     folderEl(folder) {
-      const id = typeof folder === "object" ? folder.id : folder;
-      return ctx.document.getElementById(`folder-${id}`);
+      return ctx.document.getElementById(`folder-${idOf(folder)}`);
     },
     folderChildrenEl(folder) {
-      const id = typeof folder === "object" ? folder.id : folder;
-      return ctx.document.getElementById(`folder-children-${id}`);
+      return ctx.document.getElementById(`folder-children-${idOf(folder)}`);
+    },
+    /** Шапка папки: в ней название, цель, доля, стрелки — но НЕ содержимое. */
+    folderHeader(folder) {
+      const el = ctx.folderEl(folder);
+      return el ? el.querySelector(".folder-header") : null;
     },
     /** Создать папку в модели (без модалки) и вернуть её узел. */
     addFolder(name = "Папка", parentNode = null) {
@@ -318,27 +333,29 @@ function createContext(opts = {}) {
     },
     /** Плоский порядок дерева: [{kind,id,depth}] — как его видит пользователь. */
     flat() {
-      return app.TreeModel.flatten().map(x => ({
-        kind: x.kind,
-        id: x.id,
-        depth: x.depth,
-      }));
+      return Array.from(
+        app.TreeModel.flatten().map(x => ({
+          kind: x.kind,
+          id: x.id,
+          depth: x.depth,
+        }))
+      );
     },
     /** Порядок КОРНЕВЫХ id (таймеры и папки вперемешку). */
     rootOrder() {
-      return app.TreeModel.root().map(n => Number(n.id));
+      return Array.from(app.TreeModel.root().map(n => Number(n.id)));
     },
     shareInput(timer) {
-      return ctx.document.getElementById(`share-${timer.id}`);
+      return ctx.document.getElementById(`share-${idOf(timer)}`);
     },
     shareRow(timer) {
-      return ctx.document.getElementById(`share-row-${timer.id}`);
+      return ctx.document.getElementById(`share-row-${idOf(timer)}`);
     },
     shareValue(timer) {
-      return app.TreeModel.shareOf(timer.id);
+      return app.TreeModel.shareOf(idOf(timer));
     },
     moveButton(node, dir) {
-      const id = typeof node === "object" ? node.id : node;
+      const id = idOf(node);
       const isFolder = app.TreeModel.isFolder(app.TreeModel.findNode(id).node);
       const host = isFolder ? ctx.folderEl(id) : ctx.cardById(id);
       if (!host) return null;
@@ -358,17 +375,31 @@ function createContext(opts = {}) {
       return el ? el.textContent : null;
     },
     elementOf(timer, kind) {
+      const id = idOf(timer);
       const map = {
-        planned: app.AppState.getTimerPlannedElement(timer.id),
-        tracked: app.AppState.getTimerTrackedElement(timer.id),
-        total: app.AppState.getTimerTotalElement(timer.id),
-        remaining: app.AppState.getTimerRemainingElement(timer.id),
-        recommendation: app.AppState.getTimerRecommendationElement(timer.id),
-        priority: app.AppState.getTimerPriorityElement(timer.id),
-        proportion: app.AppState.getTimerProportionElement(timer.id),
-        target: app.AppState.getTimerTargetProportionElement(timer.id),
+        planned: app.AppState.getTimerPlannedElement(id),
+        tracked: app.AppState.getTimerTrackedElement(id),
+        total: app.AppState.getTimerTotalElement(id),
+        remaining: app.AppState.getTimerRemainingElement(id),
+        recommendation: app.AppState.getTimerRecommendationElement(id),
+        priority: app.AppState.getTimerPriorityElement(id),
+        proportion: app.AppState.getTimerProportionElement(id),
+        target: app.AppState.getTimerTargetProportionElement(id),
       };
       return map[kind];
+    },
+    /**
+     * Видно ли элемент пользователю: учитывает и display/visibility самого
+     * элемента, и всех предков (свёрнутая папка скрывает содержимое).
+     */
+    isVisible(el) {
+      let node = el;
+      while (node && node.nodeType === 1) {
+        const style = window.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") return false;
+        node = node.parentElement;
+      }
+      return Boolean(el);
     },
     click(el) {
       el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));

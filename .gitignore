@@ -1,3 +1,7 @@
 node_modules/
 npm-debug.log*
 .DS_Store
+
+# RepoMapper MCP: распакованный комплект, venv и кэш тегов (в git не храним)
+repomap-kit/
+.repomap.tags.cache.v*/

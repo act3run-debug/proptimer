@@ -736,3 +736,120 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
 - 208: A/B — прогон НОВЫХ тестов против /tmp/index.before-groups.html (должны падать: тесты не тривиальны)
   и регрессионных против него же (не должны).
 - 209: tests/README.md — состав набора, цифры; conspect (каждые 10 действий); live-preview; commit+push.
+
+## 48. RepoMapper MCP (действия 203–214): комплект поднят, работает
+- Пользователь приложил `uploads/repomap_instructions.md` и запушил в GitHub коммит 7512b4b «Add files via upload»
+  с архивом `repomap-mcp-kit.tar.gz` (74 726 Б). Локальная main подтянута fast-forward (a44391e → 7512b4b).
+- `tar -xzf repomap-mcp-kit.tar.gz` → `repomap-kit/` (README-FIRST.md, bootstrap-repomap.sh, mcp-call.mjs,
+  repomap-notes.md, RepoMapper-src/). `bash repomap-kit/bootstrap-repomap.sh` → venv за ~18 с (пин-версии из
+  uv.lock автора: tree-sitter 0.25.1, fastmcp 2.11.3, mcp 1.13.1, pydantic 2.11.7…), идемпотентно.
+- Проверка `node repomap-kit/mcp-call.mjs list --server "$SRV"` → инструменты `repo_map`, `search_identifiers` ✓.
+- `repo_map` по репо (token_limit 4000, mentioned_files index.html+tests/groups.test.js): 78 файлов,
+  143 определения, 3953 ссылки. Карту отдаёт по tests/*.js и по исходникам кита; **index.html в карту не
+  попадает** (один большой <script> внутри HTML — tree-sitter-html сигнатуры JS не извлекает), поэтому по
+  index.html по-прежнему работаем grep/sed, а кит полезен для tests/ и чужих репо.
+- Грабли из README-FIRST (учтены): зависимости в venv не обновлять; при пустой карте —
+  `rm -rf "$ROOT/.repomap.tags.cache.v*"`; литерал `/home/user` в JSON-аргументы не писать (только $ROOT/$(pwd));
+  сервер живёт в пределах ОДНОГО вызова bash → цепочки группировать в один вызов.
+- В git кит НЕ коммитим: `repomap-kit/`, `.repomap.tags.cache.v*/` и `.venv/` добавлены в .gitignore
+  (сам архив repomap-mcp-kit.tar.gz уже в репозитории стараниями пользователя — оставлен как есть).
+
+## 49. Журнал задачи 4 (действия 202–250): новый набор tests/groups.test.js — 66 тестов
+- 202: создан tests/groups.test.js (ТЗ 2–8): сцена `scene()` = A 0.5 / B 0.3 / C 0.2, `folderScene()` = A в корне
+  + папка F[B 0.3, C 0.2] (цель F = 0.5, доли внутри 0.6/0.4). Хелперы: `domOrder(ctx)` (DFS по DOM),
+  `visible`, `modalClick`, `T(ctx)`, `target(t)`, `folderById`.
+- 215–216: первый прогон — 30/65 pass. Сводка падений собрана парсером TAP в /tmp/g/groups.tap.
+- 219–225: разведка настоящего API: объекты дерева — **классы со статическими методами** (TreeModel:3388,
+  TreeMoveView:4054, FolderView:4086, TreeController:4249, CreateGroupController:4360,
+  MoveToGroupController:4404, GroupTaskController:4711, SplitController:4867). `TreeModel.createFolder(name,
+  parentNode, index)` возвращает узел ✓; у FolderView есть folderElement/nameElement/targetElement/
+  shareElement/toggleElement/childrenElement/isCollapsed/toggleCollapsed; у MoveToGroupController —
+  ROOT_OPTION="root" и классы чекбоксов move-root/move-folder/move-timer.
+- Причины падений (все — в МОИХ тестах, реализация оказалась права):
+  1. `f` лежал на объекте сцены, а тесты обращались к `ctx.f` → folderScene теперь дублирует `ctx.f = f`;
+  2. элемент папки `#folder-<id>` СОДЕРЖИТ карточки детей → запросы кнопок/полей надо скоупить к шапке
+     (в харнесс добавлен `ctx.folderHeader()`);
+  3. `ctx.shareInput(c.id)` — хелпер ждал сущность, а не id → в харнесс добавлен `idOf()` и все карточные
+     хелперы (card, cardById, shareInput/shareRow/shareValue, elementOf, moveButton) теперь терпят и id;
+  4. **jsdom-область**: `TreeModel.flatten()`/`root()` возвращают массивы из области jsdom, и
+     `assert.deepEqual` (strict) падал с «Values have same structure but are not reference-equal» →
+     харнесс `flat()`/`rootOrder()` оборачивают результат в `Array.from`;
+  5. `ctx.flat()` — DFS со ВСЕХ уровней, для порядка корня нужен `ctx.rootOrder()`;
+  6. видимость: jsdom `getComputedStyle` не учитывает `display:none` у предков → в харнесс добавлен
+     `ctx.isVisible(el)` (обход предков), локальный `visible()` в тестах делегирует ему;
+  7. тест «доля оставшейся не изменилась» был неверен: после удаления сиблинга единственный ребёнок имеет
+     долю 1 (но НЕ показывается — ТЗ 3.4.3);
+  8. тест ТЗ 7.2.2 переписан на чистой сцене (0.4/0.3/0.2/0.1, сумма 1): проверяем одинаковый множитель у
+     оставшихся, сохранение соотношения долей и суммы группы;
+  9. строковые проверки «в html нет слова sibling-highlight/splitShare» срабатывали на КОММЕНТАРИЙ и на
+     миграцию (`delete timer.splitShare` в санитайзере — очистка старых сохранений) → заменены на проверки
+     поведения: нет CSS-правил `.sibling-highlight{`/`.split-share{`, нет classList-подсветки, в DOM нет
+     `.split-share*`, в карточке нет «←», у новых подзадач нет legacy-полей; отдельным тестом проверена
+     миграция: старое сохранение со splitShare/splitId/splitParentName загружается без этих полей;
+  10. доля папки в КОРНЕ не показывается (ТЗ 3.4.2) — тест ТЗ 8.5 переписан: сначала проверяем скрытие в
+      корне, затем делаем папку некорневой (родитель Outer + соседи) и проверяем показ.
+- 245: **npm test → 201/201 pass, 0 fail (~42 с)**: 135 прежних + 66 новых (groups.test.js).
+- 246–250: разведка под tests/groups-move.test.js: семантика `TreeModel.moveUp/moveDown` (обычный обмен
+  внутри уровня; погружение в группу только с края уровня в сторону группы-соседа; выход из группы с края —
+  ровно над/под группой; на верхнем уровне с края — перенос в противоположный конец ВНЕ группы);
+  `TreeController.move` → renderTree + saveTimersToLocalStorage + `CloudSync.bumpControl()` (ТЗ 10.2);
+  `CloudSync.STATE_KEYS` включает "tree"; `meaningfulProjection` вставляет snapshot.tree БЕЗ сортировки
+  (таймеры при этом сортируются — поэтому раньше порядок не разъезжался).
+
+## 50. Намерение (действия 252+)
+- 252–254: tests/groups-move.test.js — ТЗ 9 (перемещения: группа целиком, доп. клик для входа, выход с края,
+  wrap-around, погружение на два уровня, неизменность цели и пересчёт долей обоих уровней, клики по стрелкам
+  в DOM) и ТЗ 10 (порядок в "tree", STATE_KEYS, meaningfulProjection без сортировки дерева, bumpControl на
+  клик, идентичность порядка на «втором устройстве»).
+- 255: полный npm test; разбор падений (чинить реализацию, если тест вскроет баг).
+- 256–257: A/B — новые наборы против /tmp/index.before-groups.html (должны падать), регрессии против него же.
+- 258: tests/README.md (состав и цифры), conspect, live-preview, commit+push.
+
+## 51. Журнал задачи 4 (действия 251–281): +100 тестов, найден и починен баг рендера
+- 251–252: conspect (секции 48–50); в .gitignore добавлены `repomap-kit/` и `.repomap.tags.cache.v*/`
+  (сам repomap-mcp-kit.tar.gz уже в репозитории — оставлен).
+- 253–255: разведка под перемещения: `TreeModel.moveUp/moveDown` — обычный обмен внутри уровня; погружение
+  в группу ТОЛЬКО с края уровня в сторону группы-соседа; выход из группы с края — ровно над/под группой;
+  на верхнем уровне с края — перенос в противоположный конец ВНЕ группы; `TreeController.move` →
+  renderTree + save + `CloudSync.bumpControl()`; `snapshotLocal()` собирает снимок по STATE_KEYS.
+  Создан tests/groups-move.test.js (35 тестов): ТЗ 9.1–9.5 (группа целиком, дополнительный клик для входа,
+  выход с края, wrap-around, погружение на два уровня вверх и вниз, цель не меняется, доли обоих уровней
+  пересчитаны, стрелками = «В группу», внутренние доли папки при перестановке не меняются, клики по стрелкам
+  в DOM, границы) и ТЗ 10 (порядок в "tree", STATE_KEYS, проекция без сортировки дерева, bumpControl на клик
+  и на структурные изменения, идентичный порядок на «втором устройстве», приём дерева «из облака»).
+- 256: первый прогон — 25/35. Причины падений: (а) `childrenOf(...).map(...)` — массив области jsdom;
+  (б) я путал направление клика: погружение с нижнего края делает «вверх» (ТЗ 9.4.2), а не «вниз»;
+  (в) неверные ожидания порядка корня (папка создаётся последней, перенесённые задачи уходят из корня);
+  (г) выход из вложенной группы даёт родителя Outer (на один уровень вверх), а не корень;
+  (д) один тест-«рассуждение» удалён как запутанный (его заменяет чистый «вниз с самого верха»);
+  (е) содержимое свёрнутой папки остаётся в DOM (скрытым) — проверка переведена на ctx.isVisible.
+- 257–263: разбор падения «дерево из облака не отрисовало детей» привёл к НАСТОЯЩЕМУ БАГУ реализации:
+  `TimerView.renderTree()` брал контейнер детей через `FolderView.childrenElement(id)` =
+  `document.getElementById(...)`, а только что созданная `createFolderElement()` папка ещё НЕ прикреплена к
+  документу (её прикрепляет `reconcileChildren` в конце обхода) → walk по детям пропускался → карточки детей
+  не попадали в desired и удалялись из DOM как «лишние». Воспроизводится при одиночном проходе рендера
+  (приём дерева из облака/импорт без пересоздания карточек). Штатные пути («Разбить», «Создать задачу внутри
+  группы») случайно спасались тем, что рендер вызывается несколько раз.
+- 265: **patch10.py** — `renderTree`: `const childrenHost = FolderView.childrenElement(node.id) || el.querySelector(".folder-children")`
+  + комментарий. Проверено: одиночный проход рисует детей внутри папки, метаданные папки дозаполняются
+  (`updateAllMeta()` в конце). index.html 309 198 Б, синтаксис OK.
+- 266–268: правки groups-move.test.js (childLabels, направления кликов, ожидания порядка, удалён запутанный
+  тест, сворачивание через isVisible) → **34/34**; полный **npm test → 235/235 pass, 0 fail (~49 с)**:
+  135 прежних + 66 groups + 34 groups-move.
+- 269–278: A/B против /tmp/index.before-groups.html (= коммит 33db0b3, sha256 15e967d7…):
+  сначала все 135 старых тестов падали с «Не найден глобальный объект: CreateGroupController» — стенд
+  требовал наличия всех классов. **patch11** (tests/harness.js): при `ALLOW_MISSING_GLOBALS=1` отсутствующие
+  глобалы остаются null (A/B-режим), в обычном прогоне проверка строга как раньше.
+  Результаты A/B: groups.test.js — 0/66 pass на старой версии; groups-move.test.js — 0/34;
+  старые наборы — **127/135 pass**, 8 падений ровно те тесты, что переписаны под новое ТЗ
+  («Разбить» → папка; доли из дерева; доля 1/3 через parseShareInput; «В группу» в свёрнутой;
+  «Доля» скрыта в корне; «Доля» видна в свёрнутой; сквозной «день из жизни»).
+- 279–281: tests/README.md обновлён: 235 тестов, строки про groups.test.js/groups-move.test.js, раздел
+  «A/B для группировки таймеров по папкам» (команды, таблица, перечень 8 ожидаемых падений с причинами),
+  раздел «Хелперы стенда для дерева» и две грабли (массивы области jsdom; getTimerElement = getElementById
+  и найденный баг renderTree).
+
+## 52. Намерение (действия 283+)
+- 283: live-preview — поднять сервер на 0.0.0.0 (allowedHosts/origin не ограничивать), отдать index.html.
+- 284: commit + push в main (index.html + tests/* + conspect.md + .gitignore + repomap-mcp-kit.tar.gz уже в HEAD).
+- 285: итоговый ответ пользователю: что реализовано по пунктам ТЗ, цифры тестов, A/B, найденный баг renderTree.
