@@ -880,3 +880,28 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
 - Тесты: 238/238 (135 прежних + 69 groups + 34 groups-move); A/B против 33db0b3 подтверждает, что новые тесты
   проверяют именно новое поведение, а прежнее не сломано.
 - Коммиты: a44391e (реализация), 4fb8a53 (+100 тестов и фикс renderTree); следующий — README/conspect/3 теста.
+
+## 55. Сессия 5 (агент №1, 2026-11-01, действия 1–10) — повторный разбор кода по запросу пользователя
+- Запрос: «Прикрепил файл с инструкциями. Скажи, что делает этот код?» + ссылка
+  `https://github.com/act3run-debug/proptimer/index.html` (некорректный для GitHub формат — не blob/raw) + PAT в чате.
+- 1–2: прочитан `uploads/conspect md instructions.md` (правила conspect + git-политика).
+- 3: разведка среды — `/home/user` НЕ существует, cwd = `.../sessions/5c2285f5-.../workspace`, `curl` отсутствует, git 2.39.5.
+- 4: создан черновой `conspect.md` в корне workspace (позже заменён ссылкой на канонический журнал репо).
+- 5: `git clone --depth 1 https://github.com/act3run-debug/proptimer.git repo_proptimer` → OK (публичное, токен не нужен).
+- 6: `git fetch --unshallow` → полная история, 22 коммита, HEAD **a50e3fb** (2026-11-01 10:53 UTC).
+- 7–9: живая перепроверка (правило 6 context.md): title «Пропорциональный таймер», заголовок UI «physus»,
+  `APP_VERSION = "2026-11-01-groups"` (строка 376), index.html = 6551 строка / 309 198 Б (CRLF),
+  состав: `<style>` 6–327, `<body>` 329, `<script>` 369–6549. Классы подтверждены: NotificationService 382,
+  EventService 403, SessionManager 489, AppController 556, StorageService 1061, TimerController 1503,
+  TimerModel 1852, Timer 2043, ProportionCalculator 2049, TimeCalculator 2221, PriorityCalculator 2291,
+  CalculationService 2309, TimerView 2453, TimeManager 3183, TreeModel 3394, TreeMoveView 4060, FolderView 4092,
+  TreeController 4255, CreateGroupController 4366, MoveToGroupController 4410, MenuController 4552,
+  ModalController 4563, AddTaskController 4650, GroupTaskController 4717, SplitController 4873, UIFactory 5011,
+  Utils 5049, CloudSync 5146, TimeZoneHolder 6060, CloudController 6277.
+- Находки: авто-away — `TimeManager.syncAutoAway` (3263), кнопки «Отошёл» в панели нет (комментарий 334–338);
+  localStorage-ключи `timers` (1096) и `tree` (565); `STATE_KEYS` (5156) — 12+ ключей облачной проекции,
+  включая `controlSeq`, `trackingOwnerDevice`, `tzHolderDevice/Zone/SkewMs`; Supabase: `rest/v1/rpc` (5491).
+- ЗАМЕЧАНИЕ ПО БЕЗОПАСНОСТИ: `CLOUD_CONFIG` (строки 377–381) содержит реальные Supabase URL и publishable-ключ
+  в публичном репо. Ключ publishable (рассчитан на браузер), но корректность зависит от RLS на проекте.
+- 10: обновлён этот conspect; ответ пользователю — что делает приложение (см. разделы 5–10 журнала и ниже).
+- Git-политика: pull --rebase → Already up to date (HEAD a50e3fb); после ответа — commit+push.
