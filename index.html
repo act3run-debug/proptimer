@@ -71,11 +71,13 @@
         display: flex;
         align-items: center;
       }
+      /* Дерево задач: сущности идут в ряд ВЕРТИКАЛЬНО (ТЗ 8.1), а уровень
+         вложенности задаётся отступом слева у .folder-children (ТЗ 8.2). */
       #timersContainer {
         margin-top: 60px;
         display: flex;
-        flex-wrap: wrap;
-        justify-content: flex-start;
+        flex-direction: column;
+        align-items: flex-start;
       }
       #appTitle {
         color: #4caf50;
@@ -213,17 +215,96 @@
         display: block;
         margin: 4px 0;
       }
-      .split-share {
+      /* --- Дерево: папки (визуальные группы) -------------------------
+         Подсветка сиблингов разбиения (.sibling-highlight) и строка
+         «Доля: … ← «родитель»» (.split-share) убраны: принадлежность
+         теперь видна из самого дерева (ТЗ 4.1–4.3). */
+      .folder-node {
+        border: 1px solid #4caf50;
+        border-radius: 5px;
+        background-color: #000000;
+        margin: 6px 0;
+        padding: 6px 8px;
+        width: 100%;
+        max-width: 480px;
+        box-sizing: border-box;
+        flex: 0 1 auto;
+      }
+      .folder-header {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .folder-label {
+        min-width: 0;
+        margin-right: 2px;
+      }
+      .folder-name {
+        width: 150px;
+        background-color: #000000;
+        color: #e0e0e0;
+        border: 1px solid #444;
+        padding: 4px;
+      }
+      .folder-target,
+      .folder-share {
+        color: #4caf50;
+        margin: 0 4px;
+        white-space: nowrap;
+      }
+      .folder-share {
+        border: 1px dashed #4caf50;
+        border-radius: 4px;
+        padding: 1px 5px;
+        cursor: help;
+      }
+      /* Стрелка сворачивания группы — СПРАВА (ТЗ 8.3) */
+      .folder-toggle {
+        margin-left: auto;
+        padding: 1px 8px;
+      }
+      .folder-children {
+        margin-left: 18px;
+        padding-left: 6px;
+        border-left: 1px dashed #333333;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .folder-node.collapsed > .folder-children {
+        display: none;
+      }
+      /* Стрелки перемещения — СЛЕВА на таймере и на папке (ТЗ 8.4) */
+      .move-buttons {
+        display: inline-flex;
+        gap: 2px;
+        margin-right: 4px;
+      }
+      .move-buttons .move-button {
+        margin: 0;
+        padding: 1px 6px;
+        font-size: 12px;
+        line-height: 1.2;
+      }
+      /* Строка «Доля» на таймере (ТЗ 3.4): видна и в свёрнутой карточке */
+      .share-container {
+        margin: 6px 0;
+      }
+      .share-container .share-value {
         color: #4caf50;
         border: 1px dashed #4caf50;
         border-radius: 4px;
-        padding: 2px 6px;
+        padding: 1px 5px;
         cursor: help;
-        display: inline-block;
       }
-      .sibling-highlight {
-        border-color: #4caf50 !important;
-        box-shadow: 0 0 8px #4caf50;
+      .folder-action {
+        padding: 2px 8px;
+      }
+      .modal-hint {
+        color: #888888;
+        font-size: 12px;
+        margin: 6px 0;
       }
       #tzHolderButton {
         white-space: nowrap;
@@ -276,6 +357,7 @@
         ☰ Операции
       </button>
       <div id="operationsMenu">
+        <button data-action="create-group">Создать группу</button>
         <button data-action="create-in-group">Создать задачу внутри группы</button>
       </div>
     </div>
@@ -290,7 +372,7 @@
       //  приложение работает в чисто локальном режиме (как раньше).
       // ============================================================
       // Версия приложения — видна в окне облака (контроль деплоя)
-      const APP_VERSION = "2026-10-31-compact";
+      const APP_VERSION = "2026-11-01-groups";
       const CLOUD_CONFIG = {
         url: "https://iqvqjiwjizlzronudgui.supabase.co",
         anonKey: "sb_publishable_da50tn1zQ9kDLuf0UsdAiw_yzMelb7J", // publishable key (безопасен для браузера)
@@ -350,15 +432,6 @@
             "focusout",
             this.handleFieldFocusTrigger
           );
-          // Подсветка сиблингов разбиения при наведении на «Долю»
-          timersContainer.addEventListener(
-            "mouseover",
-            this.handleTimersContainerMouseOver
-          );
-          timersContainer.addEventListener(
-            "mouseout",
-            this.handleTimersContainerMouseOut
-          );
           const globalEndTimeInput = document.getElementById("globalEndTime");
           globalEndTimeInput.addEventListener(
             "input",
@@ -380,34 +453,6 @@
         static handleTimersContainerChange(event) {
           return TimerController.handleTimersContainerChange(event);
         }
-        static handleTimersContainerMouseOver(event) {
-          const shareEl =
-            event.target.closest && event.target.closest(".split-share");
-          if (!shareEl) return;
-          EventService.highlightSiblings(
-            shareEl.getAttribute("data-split-id"),
-            true
-          );
-        }
-        static handleTimersContainerMouseOut(event) {
-          const shareEl =
-            event.target.closest && event.target.closest(".split-share");
-          if (!shareEl) return;
-          EventService.highlightSiblings(
-            shareEl.getAttribute("data-split-id"),
-            false
-          );
-        }
-        static highlightSiblings(splitId, on) {
-          // Подсвечивает все карточки, созданные в ОДНОМ разбиении (общий splitId)
-          if (!splitId) return;
-          AppState.getTimers().forEach(t => {
-            if (t.splitId === splitId) {
-              const card = AppState.getTimerElement(t.id);
-              if (card) card.classList.toggle("sibling-highlight", on);
-            }
-          });
-        }
         static handleGlobalControlsClick(event) {
           // Автообновление срабатывает при каждом клике ДО целевого действия
           // (бывшие кнопки «Обновить всё», «Рекомендация»,
@@ -420,6 +465,9 @@
               AddTaskController.openModal();
             } else if (action === "menu") {
               MenuController.toggle();
+            } else if (action === "create-group") {
+              MenuController.hide();
+              CreateGroupController.openModal();
             } else if (action === "create-in-group") {
               MenuController.hide();
               GroupTaskController.openModal();
@@ -541,6 +589,7 @@
             const newTimer = TimerModel.createTimer();
             newTimer.name = name || "";
             AppState.addTimer(newTimer);
+            TreeModel.insertTimerNode(newTimer.id);
             if (AppState.getGlobalEndTime()) {
               TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
             }
@@ -548,57 +597,68 @@
             CloudSync.bumpControl();
             return newTimer;
           }
-          // «Добавить ко всем» — механика add_task_to_group из py-скрипта,
-          // где группа = все задачи
-          return this.createTaskInGroup(
-            timers.map(t => t.id),
-            name,
-            share
-          );
+          // ТЗ 5.4: «+ Добавить таймер» — создание задачи на КОРНЕВОМ уровне.
+          // Ужимаются только корневые сиблинги, общая сумма сохраняется;
+          // папки-сиблинги меняют всё своё содержимое в одно и то же число
+          // раз, поэтому внутренние доли в них не меняются (ТЗ 5.4.3).
+          return this.createTaskInRoot(name, share);
         }
-        static createTaskInGroup(groupIds, name, share) {
-          // «Создать задачу внутри группы» (механика py-скрипта):
-          //  - существующие задачи группы ужимаются в (1 - p), сохраняя
-          //    относительные доли веса и цели; их время НЕ меняется;
-          //  - новая задача получает долю p внутри группы (вес P*p, цель T*p)
-          //    и «виртуальную историю» p*G/(1-p), чтобы её фактическая доля
-          //    сразу равнялась целевой и рекомендации не перекашивались.
+        static createTaskInRoot(name, share) {
+          return this.createTaskInLevel(null, name, share);
+        }
+        static createTaskInFolder(folderId, name, share) {
+          const loc = TreeModel.findNode(folderId);
+          if (!loc || !TreeModel.isFolder(loc.node)) return null;
+          return this.createTaskInLevel(loc.node, name, share);
+        }
+        /**
+         * Общая механика создания задачи внутри уровня (ТЗ 5.3.4 и 5.4):
+         * содержимое уровня ужимается в (1 − p), новая задача получает долю p,
+         * сумма уровня не меняется — значит за его пределами не меняется
+         * ничего. Папка ужимается целиком (равномерно), поэтому её внутренние
+         * доли сохраняются (ТЗ 3.9.2). level = null означает корень.
+         */
+        static createTaskInLevel(level, name, share) {
           SessionManager.clearJustAfterResetFlag();
-          const group = AppState.getTimers().filter(t =>
-            groupIds.includes(t.id)
+          const children = level
+            ? level.children || (level.children = [])
+            : TreeModel.root();
+          let p = Number(
+            typeof share === "string" ? Utils.parseShareInput(share) : share
           );
-          if (!group.length) return null;
-          let p = Number(share);
           if (!Number.isFinite(p) || p < 0) p = 0;
           if (p >= 1) p = 1 - 1e-9;
-          const groupProportion = group.reduce(
-            (sum, t) => sum + (t.proportion || 0),
-            0
+          const levelTarget = TreeModel.levelSumNodes(children);
+          const levelWeight = TreeModel.levelWeightNodes(children);
+          const memberIds = [];
+          children.forEach(node =>
+            memberIds.push(...TreeModel.descendantTimerIds(node))
           );
-          const groupTarget = group.reduce(
-            (sum, t) => sum + (t.targetProportion || 0),
-            0
-          );
-          const groupTime = group.reduce(
-            (sum, t) => sum + (t.totalSeconds || 0),
-            0
-          );
-          group.forEach(t => {
-            t.proportion = (t.proportion || 0) * (1 - p);
-            t.targetProportion = (t.targetProportion || 0) * (1 - p);
-            TimerView.syncProportionInputs(t);
-          });
+          const history = memberIds.reduce((sum, id) => {
+            const t = AppState.findTimerById(id);
+            return sum + (t ? Number(t.totalSeconds) || 0 : 0);
+          }, 0);
           const newTimer = TimerModel.createTimer();
           newTimer.name = name || "";
-          newTimer.proportion = groupProportion * p;
-          newTimer.targetProportion = groupTarget * p;
-          const virtualTime = (p * groupTime) / (1 - p);
+          newTimer.proportion = levelWeight * p;
+          newTimer.targetProportion = levelTarget * p;
+          // «Виртуальная история» p·G/(1−p): фактическая доля новой задачи
+          // сразу равна целевой, и рекомендации не перекашиваются.
+          const virtualTime = p < 1 ? (p * history) / (1 - p) : 0;
           newTimer.totalSeconds = virtualTime;
           newTimer.dailyTotalSeconds = virtualTime;
           newTimer.originalDailyTotalSeconds = virtualTime;
           newTimer.lifetimeTotalSeconds = virtualTime;
           newTimer.recommendedProportion = 0;
+          children.forEach(node => TreeModel.scaleNode(node, 1 - p, 1 - p));
           AppState.addTimer(newTimer);
+          if (level) {
+            TreeModel.moveToFolder(newTimer.id, level.id);
+          } else {
+            TreeModel.insertTimerNode(newTimer.id);
+          }
+          TimerView.renderTree();
+          TimerView.syncAllProportionInputs();
           if (AppState.getGlobalEndTime()) {
             TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
           }
@@ -606,6 +666,31 @@
           this.autoUpdate();
           CloudSync.bumpControl();
           return newTimer;
+        }
+        static createTaskInGroup(groupIds, name, share, folderName) {
+          // «Создать задачу внутри группы» (ТЗ 5.3):
+          //  - выбираются существующие группы-папки (5.3.1);
+          //  - если папок ещё нет, выбираются таймеры (5.3.2) — они и есть
+          //    визуальная группа, поэтому из отмеченных создаётся папка;
+          //  - доля p — доля новой задачи ВНУТРИ папки: содержимое папки
+          //    ужимается в (1 − p), сумма папки не меняется, а за её
+          //    пределами не меняется ничего (5.3.4).
+          SessionManager.clearJustAfterResetFlag();
+          const ids = (groupIds || []).map(Number).filter(Number.isFinite);
+          if (!ids.length) return null;
+          const folderIds = ids.filter(id => {
+            const loc = TreeModel.findNode(id);
+            return Boolean(loc) && TreeModel.isFolder(loc.node);
+          });
+          let folderId;
+          if (folderIds.length) {
+            folderId = folderIds[0];
+          } else {
+            const folder = TreeModel.wrapNodesIntoFolder(ids, folderName);
+            if (!folder) return null;
+            folderId = folder.id;
+          }
+          return this.createTaskInFolder(folderId, name, share);
         }
         static splitTimer(timerId, specs) {
           // «Разбить задачу на подзадачи» (механика py-скрипта split_task,
@@ -767,6 +852,11 @@
       NotificationService.initializeNotificationSystem();
       const AppState = {
         timers: [],
+        // Дерево задач: порядок и вложенность (папки). Узел таймера
+        // { k: "t", id }, узел папки { k: "f", id, name, children: [...] }.
+        // Единственный источник истины о порядке — он же сериализуется
+        // в localStorage ("tree") и уезжает в облако (ТЗ 10.1).
+        tree: [],
         globalEndTime: null,
         initialAvailable: 0,
         lastUpdateTime: new Date(),
@@ -778,6 +868,13 @@
         observers: {},
         getTimers() {
           return this.timers;
+        },
+        getTree() {
+          return this.tree;
+        },
+        setTree(newTree) {
+          this.tree = Array.isArray(newTree) ? newTree : [];
+          this.notify("treeChanged", this.tree);
         },
         setTimers(newTimers) {
           this.timers = newTimers;
@@ -1328,12 +1425,50 @@
             }
             return;
           }
+          // Стрелка сворачивания ГРУППЫ (ТЗ 8.3) — тоже чисто визуальное
+          // действие: пересчёт и облако не дёргаем.
+          if (
+            target.tagName === "BUTTON" &&
+            target.getAttribute("data-action") === "toggle-folder"
+          ) {
+            const collapsedFolderId = Utils.getFolderIdFromElement(target);
+            if (collapsedFolderId !== null) {
+              FolderView.toggleCollapsed(collapsedFolderId);
+            }
+            return;
+          }
           // Автообновление срабатывает при каждом клике ДО целевого действия
           AppController.autoUpdate();
           if (target.tagName === "BUTTON") {
+            const action = target.getAttribute("data-action");
             const timerId = Utils.getTimerIdFromElement(target);
+            const folderId = Utils.getFolderIdFromElement(target);
+            const nodeId = timerId !== null ? timerId : folderId;
+            // Перемещение стрелками ↑/↓ (ТЗ 9) — для таймера и для папки
+            if (action === "move-up" || action === "move-down") {
+              if (nodeId !== null) {
+                TreeController.move(
+                  nodeId,
+                  action === "move-down" ? "down" : "up"
+                );
+              }
+              return;
+            }
+            // Перенос «В группу» (ТЗ 6)
+            if (action === "to-group") {
+              if (timerId !== null) {
+                MoveToGroupController.openModal(timerId, "timer");
+              } else if (folderId !== null) {
+                MoveToGroupController.openModal(folderId, "folder");
+              }
+              return;
+            }
+            // Удаление группы вместе с содержимым (ТЗ 7.1.2)
+            if (action === "delete-folder") {
+              if (folderId !== null) TreeController.deleteFolder(folderId);
+              return;
+            }
             if (timerId) {
-              const action = target.getAttribute("data-action");
               if (action === "track") {
                 this.toggleTracking(timerId);
               } else if (action === "reset") {
@@ -1357,17 +1492,25 @@
         }
         static handleTimersContainerChange(event) {
           const target = event.target;
+          if (target.tagName !== "INPUT") return;
+          const action = target.getAttribute("data-action");
+          // Название папки (ТЗ 2.4) — меняется всегда
+          const folderId = Utils.getFolderIdFromElement(target);
+          if (folderId !== null && action === "folder-name") {
+            TreeController.handleFolderNameChange(target, folderId);
+            return;
+          }
           const timerId = Utils.getTimerIdFromElement(target);
           if (timerId) {
-            if (target.tagName === "INPUT") {
-              const action = target.getAttribute("data-action");
-              if (action === "name") {
-                this.handleNameChange(target, timerId);
-              } else if (action === "proportion") {
-                this.handleProportionChange(target, timerId);
-              } else if (action === "target-proportion") {
-                this.handleTargetProportionChange(target, timerId);
-              }
+            if (action === "name") {
+              this.handleNameChange(target, timerId);
+            } else if (action === "proportion") {
+              this.handleProportionChange(target, timerId);
+            } else if (action === "target-proportion") {
+              this.handleTargetProportionChange(target, timerId);
+            } else if (action === "share") {
+              // Правка ДОЛИ — локальная: радиус действия своя папка (ТЗ 3.5.4)
+              TreeController.handleShareChange(target, timerId);
             }
           }
         }
@@ -1385,12 +1528,21 @@
         static handleTargetProportionChange(input, timerId) {
           SessionManager.clearJustAfterResetFlag();
           const timer = AppState.findTimerById(timerId);
-          if (timer) {
-            TimerModel.setTargetProportion(timer, input.value);
-            AppController.calculateRecommendations();
-            // Цель влияет на рекомендации всех устройств — разослать немедленно
-            CloudSync.bumpControl();
-          }
+          if (!timer) return;
+          // ТЗ 3.7: правка ЦЕЛИ — глобальная (радиус всё приложение).
+          // Введённое значение обрезается до [0, 1] ДО любых расчётов
+          // (ТЗ 3.2.3), остальные таймеры приложения изменяются в одно и то
+          // же число раз, поэтому сумма целей остаётся равной единице, а
+          // доли самого таймера и всех папок-предков пересчитываются.
+          const parsed = Utils.parseShareInput(input.value);
+          TreeModel.setTargetGlobal(
+            timerId,
+            Number.isFinite(parsed) ? parsed : input.value
+          );
+          TimerView.syncAllProportionInputs();
+          AppController.calculateRecommendations();
+          // Цель влияет на рекомендации всех устройств — разослать немедленно
+          CloudSync.bumpControl();
         }
         static handleTrackedApplyButtonClick(timerId) {
           SessionManager.checkAndPerformReset();
@@ -1542,22 +1694,15 @@
         static deleteTimer(timer) {
           SessionManager.clearJustAfterResetFlag();
           CloudSync.bumpControl();
+          // ТЗ 7.2: перерасчёт только внутри ближайшей родительской группы и
+          // не дальше: сумма группы сохраняется, освободившееся делится между
+          // оставшимися сиблингами пропорционально прежним целям (при нулях —
+          // поровну, ТЗ 3.8), поэтому доли оставшихся не меняются, а их цели
+          // растут. На корневом уровне это прежняя ренормализация к сумме 1.
+          // Время НЕ перераспределяется.
+          TreeController.deleteTimerNode(timer);
           AppState.removeTimer(timer.id);
-          // Семантика из py-скрипта (remove_tasks): веса и цели оставшихся
-          // задач ренормализуются к сумме 1. Время НЕ перераспределяется.
-          const timers = AppState.getTimers();
-          const sumProp = timers.reduce((sum, t) => sum + (t.proportion || 0), 0);
-          const sumTarget = timers.reduce(
-            (sum, t) => sum + (t.targetProportion || 0),
-            0
-          );
-          timers.forEach(t => {
-            if (sumProp > 0) t.proportion = (t.proportion || 0) / sumProp;
-            if (sumTarget > 0) {
-              t.targetProportion = (t.targetProportion || 0) / sumTarget;
-            }
-            TimerView.syncProportionInputs(t);
-          });
+          TimerView.syncAllProportionInputs();
           if (AppState.getGlobalEndTime()) {
             TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
           }
@@ -2248,6 +2393,8 @@
             "calculationsUpdated",
             this.handleCalculationsUpdated.bind(this)
           );
+          // Дерево (папки/порядок) — единственный источник порядка в DOM
+          AppState.subscribe("treeChanged", this.renderTree.bind(this));
         }
         static updateTimeDisplay(timer, propertyName, displayId) {
           const timerSeconds = timer[propertyName];
@@ -2262,6 +2409,7 @@
           const elem = AppState.getTimerElement(timer.id);
           if (elem) elem.remove();
           this.forgetCompactState(timer.id);
+          this.renderTree();
           this.updateDisplay();
         }
         static handleTimerUpdated(timer) {
@@ -2287,14 +2435,67 @@
         }
         static addTimerElement(timer) {
           const container = AppState.getTimersContainerElement();
+          if (!container) return null;
+          const timerDiv = this.createTimerElement(timer);
+          container.appendChild(timerDiv);
+          // Порядок и вложенность задаёт дерево: renderTree переставляет
+          // карточку (и создаёт папки) на своё место, ПОВТОРНО используя
+          // уже созданные элементы — значения полей и фокус не теряются.
+          this.renderTree();
+          return timerDiv;
+        }
+        static createTimerElement(timer) {
           const timerDiv = this.createTimerContainer(timer);
           const [timerElements, targetProportionInput] =
             this.createTimerElements(timer);
           this.appendTimerElements(timerDiv, timerElements, timer);
           timer.targetProportion = parseFloat(targetProportionInput.value);
-          container.appendChild(timerDiv);
-          // Фикс (интерфейс): «Рекомендация» больше не вкладывается внутрь
-          // дисплея «Факт» — у неё есть собственная строка (см. appendTimerElements).
+          return timerDiv;
+        }
+        // ----------------------------------------------------------
+        //  Отрисовка дерева (ТЗ 8): сущности в ряд вертикально, уровни
+        //  вложенности — отступом слева, папка сворачивается стрелкой справа.
+        //  Элементы НЕ пересоздаются: существующие карточки и шапки папок
+        //  переставляются местами только если порядок действительно изменился.
+        // ----------------------------------------------------------
+        static reconcileChildren(host, desired) {
+          const wanted = new Set(desired);
+          Array.from(host.children).forEach(el => {
+            if (!wanted.has(el)) host.removeChild(el);
+          });
+          desired.forEach((el, index) => {
+            const at = host.children[index];
+            if (at !== el) host.insertBefore(el, at || null);
+          });
+        }
+        static renderTree() {
+          const container = AppState.getTimersContainerElement();
+          if (!container) return;
+          TreeModel.ensureTimerNodes();
+          const walk = (nodes, host) => {
+            const desired = [];
+            (nodes || []).forEach(node => {
+              if (TreeModel.isFolder(node)) {
+                const el =
+                  FolderView.folderElement(node.id) ||
+                  FolderView.createFolderElement(node);
+                desired.push(el);
+                FolderView.updateFolderElement(node);
+                const childrenHost = FolderView.childrenElement(node.id);
+                if (childrenHost) walk(node.children || [], childrenHost);
+                return;
+              }
+              const timer = AppState.findTimerById(node.id);
+              if (!timer) return;
+              const el =
+                AppState.getTimerElement(timer.id) ||
+                this.createTimerElement(timer);
+              desired.push(el);
+            });
+            this.reconcileChildren(host, desired);
+          };
+          walk(TreeModel.root(), container);
+          FolderView.updateAllMeta();
         }
         static createTimerContainer(timer) {
           const timerDiv = document.createElement("div");
@@ -2364,27 +2565,14 @@
           // 00. Стрелка компактного режима — слева вверху карточки:
           //     стрелка вниз = «развернуть», стрелка вверх = «свернуть».
           //     Видна в обоих состояниях (compact-toggle-container).
-          makeContainer("compact-toggle-container compact-visible", [
+          // 00. Стрелка компактного режима + стрелки перемещения (ТЗ 8.4):
+          //     перемещение стоит СПРАВА от стрелки сворачивания карточки,
+          //     чтобы первым дочерним элементом карточки осталась она
+          //     (глифы разные: ▼/▲ — свернуть, ↑/↓ — переместить).
+          const moveRow = makeContainer("compact-toggle-container compact-visible", [
             this.createCompactToggle(timer),
           ]);
-          // 0. Для задач, созданных разбиением: строка доли сверху карточки.
-          //    Наведение на долю подсвечивает всех сиблингов этого разбиения.
-          if (Number.isFinite(timer.splitShare)) {
-            const shareContainer = makeContainer("split-share-container", []);
-            const shareEl = document.createElement("span");
-            shareEl.className = "split-share";
-            shareEl.id = `split-share-${timer.id}`;
-            shareEl.setAttribute("data-split-id", String(timer.splitId || ""));
-            const parentPart = timer.splitParentName
-              ? ` \u2190 \u00ab${timer.splitParentName}\u00bb`
-              : "";
-            shareEl.textContent = `\u0414\u043e\u043b\u044f: ${Number(
-              timer.splitShare
-            ).toFixed(3)}${parentPart}`;
-            shareEl.title =
-              "\u041d\u0430\u0432\u0435\u0434\u0438\u0442\u0435, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u043e\u0432 \u044d\u0442\u043e\u0433\u043e \u0440\u0430\u0437\u0431\u0438\u0435\u043d\u0438\u044f";
-            shareContainer.appendChild(shareEl);
-          }
+          moveRow.appendChild(TreeMoveView.buttons("timer", timer.id));
           // 1. Название задачи
           makeContainer("name-input-container compact-visible", [
             makeLabel("Название:"),
@@ -2393,6 +2581,13 @@
           // 2. Пропорции: текущая (вес для плана) и целевая
           makeContainer("proportion-container", [elements.proportionDiv]);
           makeContainer("target-container compact-visible", [elements.target]);
+          // 2б. «Доля» — то же значение цели, но нормированное в рамках
+          //     родителя (ТЗ 3.1). Показывается только внутри группы и только
+          //     если у сущности есть сиблинги (ТЗ 3.4.2/3.4.3); в свёрнутой
+          //     карточке доля видна (ТЗ 3.4.4).
+          makeContainer("share-container compact-visible", [
+            this.createShareElements(timer),
+          ]);
           // 3. Основное время: План / Факт / Осталось / Всего
           makeContainer("planned-display-container", [
             elements.plannedDisplay,
@@ -2521,6 +2716,53 @@
           });
           target.appendChild(targetProportionInput);
           return [target, targetProportionInput];
+        }
+        static createShareElements(timer) {
+          const box = document.createElement("div");
+          box.className = "share-box";
+          box.id = `share-row-${timer.id}`;
+          const label = document.createElement("label");
+          label.className = "field-label";
+          label.textContent = "Доля:";
+          box.appendChild(label);
+          const share = TreeModel.isShareVisible(timer.id)
+            ? TreeModel.shareOf(timer.id)
+            : 0;
+          box.appendChild(
+            UIFactory.createInput("number", {
+              min: "0",
+              max: "1",
+              step: "0.01",
+              style: { width: "60px" },
+              value: Number(share).toFixed(4),
+              id: `share-${timer.id}`,
+              "data-action": "share",
+              title:
+                "Доля в группе: правка меняет целевую пропорцию этой задачи и " +
+                "перераспределяет остаток между сиблингами (сумма группы не меняется)",
+            })
+          );
+          return box;
+        }
+        static updateTimerShare(timer) {
+          const row = document.getElementById(`share-row-${timer.id}`);
+          if (!row) return;
+          const visible = TreeModel.isShareVisible(timer.id);
+          row.style.display = visible ? "" : "none";
+          const input = document.getElementById(`share-${timer.id}`);
+          if (!input || !visible) return;
+          const next = Number(TreeModel.shareOf(timer.id)).toFixed(4);
+          // Не перезаписываем поле, пока пользователь в нём печатает
+          if (document.activeElement !== input && input.value !== next) {
+            input.value = next;
+          }
+        }
+        static syncAllProportionInputs() {
+          AppState.getTimers().forEach(timer => {
+            this.syncProportionInputs(timer);
+            this.updateTimerShare(timer);
+          });
+          FolderView.updateAllMeta();
         }
         static createProportionElements(timer) {
           const proportionDiv = document.createElement("div");
@@ -2710,7 +2952,10 @@
             this.updateTimerProportion(timer);
             this.updateTimerRemainingTime(timer);
             this.updateTimerTrackButton(timer);
+            this.updateTimerShare(timer);
           });
+          // Производная цель и доля папок — на каждом пересчёте
+          FolderView.updateAllMeta();
         }
         static updateAllTimerProportions() {
           const timers = AppState.getTimers();
@@ -3001,6 +3246,1186 @@
             });
           }
           */
+        }
+      }
+      // ============================================================
+      //  ДЕРЕВО ЗАДАЧ: папки (визуальные группы), «Доля», перемещения.
+      //
+      //  Модель — AppState.tree, массив узлов верхнего уровня («корень»):
+      //    узел таймера: { k: "t", id: <number> }
+      //    узел папки:   { k: "f", id: <number>, name: <string>, children: [...] }
+      //  Папка — НЕ таймер: у неё нет времени, плана и кнопки запуска, а её
+      //  «Целевая пропорция» производная — сумма целей содержимого (ТЗ 2.5–2.6),
+      //  поэтому отдельным полем она не хранится и не редактируется.
+      //
+      //  «Доля» и «Целевая пропорция» — одна величина в двух представлениях
+      //  (ТЗ 3.1): доля узла = его цель / сумма целей сиблингов того же уровня.
+      //  Правка ДОЛИ локальна: сумма родителя не меняется, остальное делится
+      //  между сиблингами пропорционально прежним целям (ТЗ 3.6).
+      //  Правка ЦЕЛИ глобальна: все остальные таймеры приложения изменяются
+      //  в одно и то же число раз, чтобы сумма осталась равной 1 (ТЗ 3.7).
+      //
+      //  Порядок узлов живёт в самом дереве, сериализуется ключом "tree"
+      //  (localStorage) и входит в «осмысленную проекцию» облака БЕЗ сортировки,
+      //  поэтому порядок одинаков на всех устройствах (ТЗ 10.1) и уезжает
+      //  в облако сразу при клике (ТЗ 10.2).
+      // ============================================================
+      class TreeModel {
+        static KIND_TIMER = "t";
+        static KIND_FOLDER = "f";
+        static DEFAULT_FOLDER_NAME = "Группа";
+        static EPS = 1e-12;
+
+        // --- доступ к дереву -------------------------------------------
+        static root() {
+          return AppState.getTree();
+        }
+        static changed() {
+          AppState.notify("treeChanged", AppState.getTree());
+        }
+        static isFolder(node) {
+          return Boolean(node) && node.k === this.KIND_FOLDER;
+        }
+        static isTimerNode(node) {
+          return Boolean(node) && node.k === this.KIND_TIMER;
+        }
+        static sameId(a, b) {
+          return Number(a) === Number(b);
+        }
+        static createFolderNode(name) {
+          return {
+            k: this.KIND_FOLDER,
+            id: Utils.uniqueId(),
+            name: String(name === null || name === undefined ? "" : name),
+            children: [],
+          };
+        }
+        static createTimerNode(id) {
+          return { k: this.KIND_TIMER, id: Number(id) };
+        }
+        /** clamp значения доли/цели: мусор и отрицательные -> 0, больше 1 -> 1 (ТЗ 3.2.3). */
+        static clamp01(value) {
+          const n = Number(value);
+          if (!Number.isFinite(n) || n <= 0) return 0;
+          return n >= 1 ? 1 : n;
+        }
+
+        // --- поиск и структура -----------------------------------------
+        static findNode(id, nodes, parent) {
+          const list = nodes === undefined ? this.root() : nodes;
+          const par = parent === undefined ? null : parent;
+          if (!Array.isArray(list)) return null;
+          for (let i = 0; i < list.length; i++) {
+            const node = list[i];
+            if (!node || typeof node !== "object") continue;
+            if (this.sameId(node.id, id)) {
+              return { node, siblings: list, index: i, parent: par };
+            }
+            if (this.isFolder(node)) {
+              const deep = this.findNode(id, node.children, node);
+              if (deep) return deep;
+            }
+          }
+          return null;
+        }
+        static parentOf(id) {
+          const loc = this.findNode(id);
+          return loc ? loc.parent : null;
+        }
+        static siblingsOf(id) {
+          const loc = this.findNode(id);
+          return loc ? loc.siblings : [];
+        }
+        static childrenOf(folderId) {
+          const loc = this.findNode(folderId);
+          if (!loc || !this.isFolder(loc.node)) return null;
+          return loc.node.children;
+        }
+        static folderName(folderId) {
+          const loc = this.findNode(folderId);
+          return loc && this.isFolder(loc.node) ? loc.node.name || "" : "";
+        }
+        /** Все id таймеров внутри узла (для папки — на любой глубине). */
+        static descendantTimerIds(node) {
+          if (!node) return [];
+          if (this.isTimerNode(node)) return [Number(node.id)];
+          const out = [];
+          (node.children || []).forEach(child => {
+            out.push(...this.descendantTimerIds(child));
+          });
+          return out;
+        }
+        static allTimerIds() {
+          return this.descendantTimerIds({ k: this.KIND_FOLDER, id: -1, children: this.root() });
+        }
+        static allFolderNodes(nodes, out) {
+          const list = nodes === undefined ? this.root() : nodes;
+          const acc = out === undefined ? [] : out;
+          (list || []).forEach(node => {
+            if (this.isFolder(node)) {
+              acc.push(node);
+              this.allFolderNodes(node.children, acc);
+            }
+          });
+          return acc;
+        }
+        /** Плоский список для отрисовки/проверок: [{kind,id,depth,node,parent}]. */
+        static flatten(nodes, depth, parent, out) {
+          const list = nodes === undefined ? this.root() : nodes;
+          const d = depth || 0;
+          const par = parent === undefined ? null : parent;
+          const acc = out === undefined ? [] : out;
+          (list || []).forEach(node => {
+            acc.push({
+              kind: this.isFolder(node) ? "folder" : "timer",
+              id: Number(node.id),
+              depth: d,
+              node,
+              parent: par,
+            });
+            if (this.isFolder(node)) {
+              this.flatten(node.children, d + 1, node, acc);
+            }
+          });
+          return acc;
+        }
+        /**
+         * Дерево и список таймеров могут разъехаться (старое сохранение без
+         * ключа "tree", битые данные, импорт). Приводим в соответствие:
+         * чужие id выкидываем, отсутствующие таймеры добавляем в конец корня.
+         */
+        static ensureTimerNodes() {
+          const timers = AppState.getTimers();
+          const known = new Set();
+          const walk = nodes => {
+            (nodes || []).forEach(node => {
+              if (!node || typeof node !== "object") return;
+              if (this.isFolder(node)) {
+                known.add(`f:${node.id}`);
+                walk(node.children);
+              } else if (this.isTimerNode(node)) {
+                known.add(`t:${node.id}`);
+              }
+            });
+          };
+          const root = this.root();
+          // 1. узлы таймеров, которых нет в модели — удалить
+          const prune = nodes => {
+            for (let i = nodes.length - 1; i >= 0; i--) {
+              const node = nodes[i];
+              if (!node || typeof node !== "object") {
+                nodes.splice(i, 1);
+                continue;
+              }
+              if (this.isFolder(node)) {
+                prune(node.children || (node.children = []));
+                continue;
+              }
+              const timer = timers.find(t => this.sameId(t.id, node.id));
+              if (!timer) nodes.splice(i, 1);
+              else node.id = Number(node.id);
+            }
+          };
+          prune(root);
+          // 2. таймеры без узла — в конец корня (порядок модели сохраняется)
+          timers.forEach(timer => {
+            if (!known.has(`t:${timer.id}`) && !this.findNode(timer.id)) {
+              root.push(this.createTimerNode(timer.id));
+            }
+          });
+          return root;
+        }
+        /** Разбор сохранённого/принятого из облака дерева (защита от мусора). */
+        static sanitizeTree(raw, depth) {
+          const level = depth || 0;
+          if (!Array.isArray(raw) || level > 32) return [];
+          const out = [];
+          const seen = new Set();
+          raw.forEach(item => {
+            if (!item || typeof item !== "object") return;
+            const id = Number(item.id);
+            if (!Number.isFinite(id) || seen.has(`${item.k}:${id}`)) return;
+            seen.add(`${item.k}:${id}`);
+            if (item.k === this.KIND_FOLDER) {
+              out.push({
+                k: this.KIND_FOLDER,
+                id,
+                name: typeof item.name === "string" ? item.name : "",
+                children: this.sanitizeTree(item.children, level + 1),
+              });
+            } else if (item.k === this.KIND_TIMER) {
+              out.push({ k: this.KIND_TIMER, id });
+            }
+          });
+          return out;
+        }
+
+        // --- производные величины (цель/вес/доля) ----------------------
+        static timerById(id) {
+          return AppState.findTimerById(id);
+        }
+        static nodeTarget(node) {
+          if (!node) return 0;
+          if (this.isTimerNode(node)) {
+            const timer = this.timerById(node.id);
+            return timer ? Number(timer.targetProportion) || 0 : 0;
+          }
+          return (node.children || []).reduce(
+            (sum, child) => sum + this.nodeTarget(child),
+            0
+          );
+        }
+        static nodeWeight(node) {
+          if (!node) return 0;
+          if (this.isTimerNode(node)) {
+            const timer = this.timerById(node.id);
+            return timer ? Number(timer.proportion) || 0 : 0;
+          }
+          return (node.children || []).reduce(
+            (sum, child) => sum + this.nodeWeight(child),
+            0
+          );
+        }
+        static levelSumNodes(nodes) {
+          return (nodes || []).reduce((s, n) => s + this.nodeTarget(n), 0);
+        }
+        static levelWeightNodes(nodes) {
+          return (nodes || []).reduce((s, n) => s + this.nodeWeight(n), 0);
+        }
+        /** Сумма целевых пропорций уровня, на котором стоит узел id. */
+        static levelSumOf(id) {
+          const loc = this.findNode(id);
+          return loc ? this.levelSumNodes(loc.siblings) : 0;
+        }
+        /** Производная цель папки (ТЗ 2.6). */
+        static folderTarget(folderId) {
+          const loc = this.findNode(folderId);
+          return loc ? this.nodeTarget(loc.node) : 0;
+        }
+        /** Доля узла среди сиблингов (ТЗ 3.3); при нулевой сумме уровня — 0 (ТЗ 3.4.6). */
+        static shareOf(id) {
+          const loc = this.findNode(id);
+          if (!loc) return 0;
+          const sum = this.levelSumNodes(loc.siblings);
+          if (!(sum > 0)) return 0;
+          return this.nodeTarget(loc.node) / sum;
+        }
+        /**
+         * Показывается ли доля (ТЗ 3.4.2/3.4.3): в корне — нет (там доля
+         * численно равна цели), у единственного ребёнка — нет.
+         */
+        static isShareVisible(id) {
+          const loc = this.findNode(id);
+          if (!loc) return false;
+          if (!loc.parent) return false;
+          return loc.siblings.length > 1;
+        }
+        static isRootLevel(id) {
+          const loc = this.findNode(id);
+          return Boolean(loc) && !loc.parent;
+        }
+
+        // --- перераспределения -----------------------------------------
+        /**
+         * Равномерное изменение всего содержимого узла (ТЗ 3.9.2): папка
+         * масштабируется целиком, на любую глубину, поэтому её внутренние
+         * доли не меняются, а цели внутри меняются в одно и то же число раз.
+         */
+        static scaleNode(node, targetFactor, weightFactor) {
+          const fw = weightFactor === undefined ? targetFactor : weightFactor;
+          if (!node) return;
+          if (this.isFolder(node)) {
+            (node.children || []).forEach(child =>
+              this.scaleNode(child, targetFactor, fw)
+            );
+            return;
+          }
+          const timer = this.timerById(node.id);
+          if (!timer) return;
+          if (Number.isFinite(targetFactor)) {
+            timer.targetProportion = (Number(timer.targetProportion) || 0) * targetFactor;
+          }
+          if (Number.isFinite(fw)) {
+            timer.proportion = (Number(timer.proportion) || 0) * fw;
+          }
+        }
+        /**
+         * Нечего перераспределять пропорционально — делим поровну (ТЗ 3.8).
+         * Часть, доставшаяся папке, делится поровну между её детьми и так
+         * дальше на любую глубину (ТЗ 3.8.4).
+         */
+        static distributeEqually(nodes, amountTarget, amountWeight) {
+          const list = (nodes || []).slice();
+          if (!list.length) return;
+          const aw = amountWeight === undefined ? amountTarget : amountWeight;
+          const perT = (Number(amountTarget) || 0) / list.length;
+          const perW = (Number(aw) || 0) / list.length;
+          list.forEach(node => {
+            if (this.isFolder(node)) {
+              if ((node.children || []).length) {
+                this.distributeEqually(node.children, perT, perW);
+              }
+              return;
+            }
+            const timer = this.timerById(node.id);
+            if (!timer) return;
+            timer.targetProportion = (Number(timer.targetProportion) || 0) + perT;
+            timer.proportion = (Number(timer.proportion) || 0) + perW;
+          });
+        }
+        /**
+         * Вернуть уровню `amount` (цели) и `amountWeight` (веса), сохранив
+         * сумму уровня (ТЗ 7.2.2/7.3.2). parentNode = null означает корень.
+         * Если уровень опустел — поднимаемся выше: сумма родителя упала, и
+         * иначе общая сумма приложения перестала бы быть равной 1 (ТЗ 3.2.1).
+         */
+        static giveToLevel(parentNode, amount, amountWeight, guard) {
+          const step = guard || 0;
+          if (step > 64) return;
+          const amountT = Number(amount) || 0;
+          const amountW =
+            amountWeight === undefined ? amountT : Number(amountWeight) || 0;
+          if (!(amountT > 0) && !(amountW > 0)) return;
+          const children = parentNode ? parentNode.children || [] : this.root();
+          const sumT = this.levelSumNodes(children);
+          const sumW = this.levelWeightNodes(children);
+          if (children.length && sumT > 0) {
+            const fT = (sumT + amountT) / sumT;
+            const fW = sumW > 0 ? (sumW + amountW) / sumW : 1;
+            children.forEach(child => this.scaleNode(child, fT, fW));
+            return;
+          }
+          if (children.length) {
+            this.distributeEqually(children, amountT, amountW);
+            return;
+          }
+          if (!parentNode) return;
+          // Уровень пуст: производная цель папки parentNode стала нулевой,
+          // поэтому отдаём освободившееся её сиблингам (ТЗ 7.3).
+          const loc = this.findNode(parentNode.id);
+          if (!loc) return;
+          const rest = loc.siblings.filter(n => n !== loc.node);
+          const restT = this.levelSumNodes(rest);
+          const restW = this.levelWeightNodes(rest);
+          if (rest.length && restT > 0) {
+            const fT = (restT + amountT) / restT;
+            const fW = restW > 0 ? (restW + amountW) / restW : 1;
+            rest.forEach(n => this.scaleNode(n, fT, fW));
+            return;
+          }
+          if (rest.length) {
+            this.distributeEqually(rest, amountT, amountW);
+            return;
+          }
+          this.giveToLevel(loc.parent, amountT, amountW, step + 1);
+        }
+
+        // --- правка доли (локальная, ТЗ 3.6) ---------------------------
+        static setShareLocal(id, share) {
+          const loc = this.findNode(id);
+          // Долю папки менять нельзя: папка не таймер (ТЗ 3.5.1)
+          if (!loc || !this.isTimerNode(loc.node)) return false;
+          const timer = this.timerById(id);
+          if (!timer) return false;
+          if (loc.siblings.length < 2) return false;
+          const others = loc.siblings.filter(n => n !== loc.node);
+          const sumT = this.levelSumNodes(loc.siblings);
+          const sumW = this.levelWeightNodes(loc.siblings);
+          const othersT = this.levelSumNodes(others);
+          const othersW = this.levelWeightNodes(others);
+          const p = this.clamp01(share);
+          const newTarget = p * sumT;
+          const newWeight = p * sumW;
+          if (othersT > 0) {
+            const fT = (sumT - newTarget) / othersT;
+            const fW = othersW > 0 ? (sumW - newWeight) / othersW : 1;
+            others.forEach(n => this.scaleNode(n, fT, fW));
+          } else {
+            // ТЗ 3.8.2: у остальных нули — освободившееся поровну
+            this.distributeEqually(others, sumT - newTarget, sumW - newWeight);
+          }
+          timer.targetProportion = newTarget;
+          timer.proportion = newWeight;
+          this.changed();
+          return true;
+        }
+
+        // --- правка цели (глобальная, ТЗ 3.7) --------------------------
+        static setTargetGlobal(id, value) {
+          const timer = this.timerById(id);
+          if (!timer) return false;
+          const v = this.clamp01(value);
+          const all = AppState.getTimers();
+          const others = all.filter(t => t !== timer);
+          const totalWeight = all.reduce((s, t) => s + (Number(t.proportion) || 0), 0);
+          const othersTarget = others.reduce(
+            (s, t) => s + (Number(t.targetProportion) || 0),
+            0
+          );
+          const newWeight = v * totalWeight;
+          const othersWeight = totalWeight - newWeight;
+          timer.targetProportion = v;
+          timer.proportion = newWeight;
+          if (v >= 1) {
+            // ТЗ 3.2.4: если у одной сущности 1, у всех остальных — 0
+            others.forEach(t => {
+              t.targetProportion = 0;
+              t.proportion = 0;
+            });
+          } else if (othersTarget > 0) {
+            // ТЗ 3.7.2: все остальные таймеры приложения — в одно и то же
+            // число раз (веса тем же множителем, поэтому сумма весов, а
+            // значит и планы, сохраняются).
+            const fT = (1 - v) / othersTarget;
+            const othersWeightSum = others.reduce(
+              (s, t) => s + (Number(t.proportion) || 0),
+              0
+            );
+            const fW = othersWeightSum > 0 ? othersWeight / othersWeightSum : 1;
+            others.forEach(t => {
+              t.targetProportion = (Number(t.targetProportion) || 0) * fT;
+              t.proportion = (Number(t.proportion) || 0) * fW;
+            });
+          } else {
+            // ТЗ 3.8.3: перераспределять нечего — поровну между остальными
+            const n = others.length || 1;
+            const perT = (1 - v) / n;
+            const perW = othersWeight / n;
+            others.forEach(t => {
+              t.targetProportion = perT;
+              t.proportion = perW;
+            });
+          }
+          this.changed();
+          return true;
+        }
+
+        // --- создание/вставка/удаление ---------------------------------
+        static createFolder(name, parentNode, index) {
+          const node = this.createFolderNode(
+            name === undefined || name === null || String(name).trim() === ""
+              ? this.DEFAULT_FOLDER_NAME
+              : String(name).trim()
+          );
+          const list = parentNode ? parentNode.children || (parentNode.children = []) : this.root();
+          const at =
+            index === undefined || index === null
+              ? list.length
+              : Math.max(0, Math.min(index, list.length));
+          list.splice(at, 0, node);
+          this.changed();
+          return node;
+        }
+        static insertTimerNode(timerId, parentNode, index) {
+          const existing = this.findNode(timerId);
+          if (existing) return existing.node;
+          const node = this.createTimerNode(timerId);
+          const list = parentNode ? parentNode.children || (parentNode.children = []) : this.root();
+          const at =
+            index === undefined || index === null
+              ? list.length
+              : Math.max(0, Math.min(index, list.length));
+          list.splice(at, 0, node);
+          this.changed();
+          return node;
+        }
+        /**
+         * Обернуть узлы (таймеры и/или папки) в новую папку на месте первого
+         * из них. Используется операцией «Создать задачу внутри группы»
+         * (ТЗ 5.3.2) и переносом «В группу», когда папок ещё нет (ТЗ 6.2).
+         */
+        static wrapNodesIntoFolder(nodeIds, name) {
+          const ids = (nodeIds || []).map(Number).filter(Number.isFinite);
+          const locs = [];
+          ids.forEach(id => {
+            const loc = this.findNode(id);
+            if (loc && !locs.some(x => x.node === loc.node)) locs.push(loc);
+          });
+          if (!locs.length) return null;
+          const first = locs[0];
+          const hostList = first.siblings;
+          const at = Math.min(first.index, hostList.length);
+          const folder = this.createFolderNode(
+            name && String(name).trim()
+              ? String(name).trim()
+              : this.DEFAULT_FOLDER_NAME
+          );
+          // Извлекаем узлы по id: после каждого splice сохранённые индексы
+          // остальных «плывут», поэтому переспрашиваем позицию заново.
+          locs.forEach(loc => {
+            const cur = this.findNode(loc.node.id);
+            if (cur) cur.siblings.splice(cur.index, 1);
+            folder.children.push(loc.node);
+          });
+          hostList.splice(at, 0, folder);
+          this.changed();
+          return folder;
+        }
+        /** Таймер на своём месте заменяется папкой с подзадачами (ТЗ 5.2). */
+        static replaceTimerWithFolder(timerId, folderName, childTimerIds) {
+          const loc = this.findNode(timerId);
+          const folder = this.createFolderNode(
+            folderName === undefined || folderName === null || String(folderName).trim() === ""
+              ? this.DEFAULT_FOLDER_NAME
+              : String(folderName).trim()
+          );
+          (childTimerIds || []).forEach(id =>
+            folder.children.push(this.createTimerNode(id))
+          );
+          if (!loc) {
+            this.root().push(folder);
+            this.changed();
+            return folder;
+          }
+          loc.siblings.splice(loc.index, 1, folder);
+          this.changed();
+          return folder;
+        }
+        /**
+         * Удаление узла с перерасчётом (ТЗ 7): освободившаяся часть
+         * распределяется между сиблингами того же уровня, сумма уровня
+         * сохраняется; за пределами уровня ничего не меняется.
+         * Возвращает { node, timerIds, freedTarget, freedWeight }.
+         */
+        static deleteNodeWithRedistribution(id) {
+          const loc = this.findNode(id);
+          if (!loc) return null;
+          const freedTarget = this.nodeTarget(loc.node);
+          const freedWeight = this.nodeWeight(loc.node);
+          const timerIds = this.descendantTimerIds(loc.node);
+          loc.siblings.splice(loc.index, 1);
+          this.giveToLevel(loc.parent, freedTarget, freedWeight);
+          this.changed();
+          return {
+            node: loc.node,
+            timerIds,
+            freedTarget,
+            freedWeight,
+            parent: loc.parent,
+          };
+        }
+
+        // --- перенос и перемещение (ТЗ 6, 9) ---------------------------
+        static canMoveInto(nodeId, folderId) {
+          if (folderId === null || folderId === undefined) return true;
+          if (this.sameId(nodeId, folderId)) return false;
+          const loc = this.findNode(nodeId);
+          if (!loc) return false;
+          // Нельзя перенести папку внутрь самой себя или своего потомка
+          const folders = [];
+          const collect = node => {
+            if (this.isFolder(node)) {
+              folders.push(Number(node.id));
+              (node.children || []).forEach(collect);
+            }
+          };
+          collect(loc.node);
+          if (folders.some(f => this.sameId(f, folderId))) return false;
+          const target = this.findNode(folderId);
+          return Boolean(target) && this.isFolder(target.node);
+        }
+        /**
+         * Перенос узла в папку (folderId = null -> в корень). Целевая
+         * пропорция переносимой сущности НЕ меняется (ТЗ 6.4): сумма одного
+         * уровня уменьшается, другого — увеличивается на ту же величину.
+         */
+        static moveToFolder(nodeId, folderId, index) {
+          const target =
+            folderId === null || folderId === undefined
+              ? this.root()
+              : (this.childrenOf(folderId) || null);
+          if (!target) return false;
+          if (!this.canMoveInto(nodeId, folderId)) return false;
+          const loc = this.findNode(nodeId);
+          if (!loc) return false;
+          loc.siblings.splice(loc.index, 1);
+          const at =
+            index === undefined || index === null
+              ? target.length
+              : Math.max(0, Math.min(index, target.length));
+          target.splice(at, 0, loc.node);
+          this.changed();
+          return true;
+        }
+        /**
+         * Перемещение стрелками (ТЗ 9). Движение буквально по вертикали:
+         * один клик = одна позиция среди сиблингов, а чтобы попасть внутрь
+         * соседней группы, всегда нужен дополнительный клик (ТЗ 9.2) —
+         * погружение происходит только с края уровня.
+         */
+        static moveUp(id) {
+          const loc = this.findNode(id);
+          if (!loc) return false;
+          const { siblings, index, node, parent } = loc;
+          const prev = index > 0 ? siblings[index - 1] : null;
+          const isLast = index === siblings.length - 1;
+          // ТЗ 9.4.2/9.4.3: снизу у края — погружение в группу-соседа сверху,
+          // каждый следующий клик погружает глубже.
+          if (isLast && prev && this.isFolder(prev)) {
+            return this.moveToFolder(id, prev.id, (prev.children || []).length);
+          }
+          if (index > 0) {
+            siblings.splice(index, 1);
+            siblings.splice(index - 1, 0, node);
+            this.changed();
+            return true;
+          }
+          // index === 0
+          if (parent) {
+            // ТЗ 9.3.1: верх уровня — выход из группы на уровень выше,
+            // ровно над этой группой.
+            const parentLoc = this.findNode(parent.id);
+            if (!parentLoc) return false;
+            siblings.splice(index, 1);
+            parentLoc.siblings.splice(parentLoc.index, 0, node);
+            this.changed();
+            return true;
+          }
+          // ТЗ 9.4.1: верх самого верхнего уровня — в самый низ, вне группы.
+          siblings.splice(index, 1);
+          siblings.push(node);
+          this.changed();
+          return true;
+        }
+        static moveDown(id) {
+          const loc = this.findNode(id);
+          if (!loc) return false;
+          const { siblings, index, node, parent } = loc;
+          const next = index < siblings.length - 1 ? siblings[index + 1] : null;
+          const isFirst = index === 0;
+          // ТЗ 9.4.4: сверху у края — погружение в группу-соседа снизу.
+          if (isFirst && next && this.isFolder(next)) {
+            return this.moveToFolder(id, next.id, 0);
+          }
+          if (index < siblings.length - 1) {
+            siblings.splice(index, 1);
+            siblings.splice(index + 1, 0, node);
+            this.changed();
+            return true;
+          }
+          // index === last
+          if (parent) {
+            // ТЗ 9.3.2: низ уровня — выход из группы на уровень ниже,
+            // ровно под этой группой.
+            const parentLoc = this.findNode(parent.id);
+            if (!parentLoc) return false;
+            siblings.splice(index, 1);
+            parentLoc.siblings.splice(parentLoc.index + 1, 0, node);
+            this.changed();
+            return true;
+          }
+          // ТЗ 9.4.4: низ самого верхнего уровня — в самый верх, вне группы.
+          siblings.splice(index, 1);
+          siblings.unshift(node);
+          this.changed();
+          return true;
+        }
+        static move(id, direction) {
+          return direction === "down" ? this.moveDown(id) : this.moveUp(id);
+        }
+        static renameFolder(folderId, name) {
+          const loc = this.findNode(folderId);
+          if (!loc || !this.isFolder(loc.node)) return false;
+          loc.node.name = String(name === null || name === undefined ? "" : name);
+          this.changed();
+          return true;
+        }
+      }
+
+      // ============================================================
+      //  Стрелки перемещения (ТЗ 8.4/9) — общие для таймера и для папки.
+      //  Глифы ↑/↓ намеренно отличаются от ▼/▲ компактного режима карточки.
+      // ============================================================
+      class TreeMoveView {
+        static UP_ICON = "\u2191";
+        static DOWN_ICON = "\u2193";
+        static buttons(kind, id) {
+          const box = document.createElement("span");
+          box.className = "move-buttons";
+          box.setAttribute(`data-${kind}-id`, String(id));
+          box.appendChild(
+            UIFactory.createButton(this.UP_ICON, "move-up", {
+              class: "move-button",
+              title: "Переместить вверх",
+              [`data-${kind}-id`]: String(id),
+            })
+          );
+          box.appendChild(
+            UIFactory.createButton(this.DOWN_ICON, "move-down", {
+              class: "move-button",
+              title: "Переместить вниз",
+              [`data-${kind}-id`]: String(id),
+            })
+          );
+          return box;
+        }
+      }
+
+      // ============================================================
+      //  Представление папки: шапка (название, производная цель, доля,
+      //  «В группу», «Удалить») и контейнер детей с отступом уровня.
+      //  Стрелка сворачивания СПРАВА (ТЗ 8.3), стрелки перемещения СЛЕВА
+      //  (ТЗ 8.4). Состояние свёрнутости — только представление (как
+      //  компактный режим карточек): в модель и в облако не попадает.
+      // ============================================================
+      class FolderView {
+        static COLLAPSE_ICON = "\u25BC"; // ▼ — группа раскрыта, клик сворачивает
+        static EXPAND_ICON = "\u25B6"; // ▶ — группа свёрнута, клик раскрывает
+        static MOVE_UP_ICON = "\u2191"; // ↑
+        static MOVE_DOWN_ICON = "\u2193"; // ↓
+        static collapsedFolders = new Set();
+
+        static isCollapsed(folderId) {
+          return this.collapsedFolders.has(String(folderId));
+        }
+        static folderElement(folderId) {
+          return document.getElementById(`folder-${folderId}`);
+        }
+        static nameElement(folderId) {
+          return document.getElementById(`folder-name-${folderId}`);
+        }
+        static targetElement(folderId) {
+          return document.getElementById(`folder-target-${folderId}`);
+        }
+        static shareElement(folderId) {
+          return document.getElementById(`folder-share-${folderId}`);
+        }
+        static toggleElement(folderId) {
+          return document.getElementById(`folder-toggle-${folderId}`);
+        }
+        static childrenElement(folderId) {
+          return document.getElementById(`folder-children-${folderId}`);
+        }
+        static forget(folderId) {
+          this.collapsedFolders.delete(String(folderId));
+        }
+        static moveButtons(kind, id) {
+          return TreeMoveView.buttons(kind, id);
+        }
+        static createFolderElement(node) {
+          const wrapper = document.createElement("div");
+          wrapper.className = this.isCollapsed(node.id)
+            ? "folder-node collapsed"
+            : "folder-node";
+          wrapper.id = `folder-${node.id}`;
+          wrapper.setAttribute("data-folder-id", String(node.id));
+
+          const header = document.createElement("div");
+          header.className = "folder-header";
+          // слева — стрелки перемещения (ТЗ 8.4)
+          header.appendChild(this.moveButtons("folder", node.id));
+          const label = document.createElement("label");
+          label.className = "field-label folder-label";
+          label.textContent = "Папка:";
+          header.appendChild(label);
+          const nameInput = UIFactory.createInput("text", {
+            class: "folder-name",
+            id: `folder-name-${node.id}`,
+            value: node.name || "",
+            placeholder: "Название группы",
+            "data-action": "folder-name",
+            "data-folder-id": String(node.id),
+          });
+          header.appendChild(nameInput);
+          const target = document.createElement("span");
+          target.className = "folder-target";
+          target.id = `folder-target-${node.id}`;
+          header.appendChild(target);
+          const share = document.createElement("span");
+          share.className = "folder-share";
+          share.id = `folder-share-${node.id}`;
+          share.title =
+            "Доля группы среди сиблингов — производная величина (сумма целей содержимого)";
+          header.appendChild(share);
+          header.appendChild(
+            UIFactory.createButton("В группу", "to-group", {
+              class: "folder-action",
+              title: "Перенести группу внутрь другой группы",
+              "data-folder-id": String(node.id),
+            })
+          );
+          header.appendChild(
+            UIFactory.createButton("Удалить", "delete-folder", {
+              class: "folder-action",
+              title: "Удалить группу вместе с содержимым",
+              "data-folder-id": String(node.id),
+            })
+          );
+          // справа — стрелка сворачивания (ТЗ 8.3)
+          header.appendChild(
+            UIFactory.createButton(
+              this.isCollapsed(node.id) ? this.EXPAND_ICON : this.COLLAPSE_ICON,
+              "toggle-folder",
+              {
+                class: "folder-toggle",
+                id: `folder-toggle-${node.id}`,
+                title: this.isCollapsed(node.id) ? "Развернуть группу" : "Свернуть группу",
+                "aria-expanded": this.isCollapsed(node.id) ? "false" : "true",
+                "data-folder-id": String(node.id),
+              }
+            )
+          );
+          wrapper.appendChild(header);
+
+          const children = document.createElement("div");
+          children.className = "folder-children";
+          children.id = `folder-children-${node.id}`;
+          wrapper.appendChild(children);
+          return wrapper;
+        }
+        static updateFolderElement(node) {
+          const el = this.folderElement(node.id);
+          if (!el) return;
+          const collapsed = this.isCollapsed(node.id);
+          el.classList.toggle("collapsed", collapsed);
+          const nameInput = this.nameElement(node.id);
+          if (
+            nameInput &&
+            nameInput.value !== (node.name || "") &&
+            document.activeElement !== nameInput
+          ) {
+            nameInput.value = node.name || "";
+          }
+          const target = this.targetElement(node.id);
+          if (target) {
+            target.textContent = `Целевая пропорция: ${Number(
+              TreeModel.folderTarget(node.id)
+            ).toFixed(4)}`;
+          }
+          const share = this.shareElement(node.id);
+          if (share) {
+            const visible = TreeModel.isShareVisible(node.id);
+            share.style.display = visible ? "" : "none";
+            share.textContent = `Доля: ${Number(
+              TreeModel.shareOf(node.id)
+            ).toFixed(4)}`;
+          }
+          const toggle = this.toggleElement(node.id);
+          if (toggle) {
+            toggle.textContent = collapsed ? this.EXPAND_ICON : this.COLLAPSE_ICON;
+            toggle.title = collapsed ? "Развернуть группу" : "Свернуть группу";
+            toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+          }
+        }
+        static toggleCollapsed(folderId) {
+          const key = String(folderId);
+          if (this.collapsedFolders.has(key)) this.collapsedFolders.delete(key);
+          else this.collapsedFolders.add(key);
+          const node = TreeModel.findNode(folderId);
+          if (node && TreeModel.isFolder(node.node)) {
+            this.updateFolderElement(node.node);
+          }
+          return this.isCollapsed(folderId);
+        }
+        /** Доли/цели всех папок и строки «Доля» всех таймеров. */
+        static updateAllMeta() {
+          TreeModel.allFolderNodes().forEach(node => this.updateFolderElement(node));
+          AppState.getTimers().forEach(timer =>
+            TimerView.updateTimerShare(timer)
+          );
+        }
+      }
+
+      // ============================================================
+      //  Контроллер дерева: создание/удаление папок, перенос «В группу»,
+      //  перемещение стрелками, переименование. Любое действие — сразу
+      //  в localStorage и в облако (ТЗ 10.2).
+      // ============================================================
+      class TreeController {
+        static createFolder(name, parentNode) {
+          const node = TreeModel.createFolder(name, parentNode || null);
+          this.afterStructureChange();
+          return node;
+        }
+        /** Папка из отмеченных таймеров (используется модалками). */
+        static createFolderFromTimers(timerIds, name) {
+          const node = TreeModel.wrapNodesIntoFolder(timerIds, name);
+          if (node) this.afterStructureChange();
+          return node;
+        }
+        static deleteFolder(folderId) {
+          const info = TreeModel.deleteNodeWithRedistribution(folderId);
+          if (!info) return false;
+          SessionManager.clearJustAfterResetFlag();
+          info.timerIds.forEach(id => {
+            const timer = AppState.findTimerById(id);
+            if (timer) AppState.removeTimer(id);
+            TimerView.forgetCompactState(id);
+          });
+          TreeModel.allFolderNodes(info.node.children || []).forEach(child =>
+            FolderView.forget(child.id)
+          );
+          FolderView.forget(folderId);
+          this.afterStructureChange();
+          return true;
+        }
+        static deleteTimerNode(timer) {
+          const info = TreeModel.deleteNodeWithRedistribution(timer.id);
+          TimerView.forgetCompactState(timer.id);
+          return info;
+        }
+        static move(nodeId, direction) {
+          const moved = TreeModel.move(nodeId, direction);
+          if (moved) {
+            TimerView.renderTree();
+            FolderView.updateAllMeta();
+            TimerView.syncAllProportionInputs();
+            StorageService.saveTimersToLocalStorage();
+            // Перемещение меняет порядок — он обязан разъехаться по устройствам
+            CloudSync.bumpControl();
+          }
+          return moved;
+        }
+        static moveToFolder(nodeId, folderId) {
+          if (!TreeModel.canMoveInto(nodeId, folderId)) return false;
+          const moved = TreeModel.moveToFolder(nodeId, folderId);
+          if (moved) {
+            TimerView.renderTree();
+            FolderView.updateAllMeta();
+            TimerView.syncAllProportionInputs();
+            CalculationService.updateCalculations();
+            AppController.calculateRecommendations();
+            StorageService.saveTimersToLocalStorage();
+            CloudSync.bumpControl();
+          }
+          return moved;
+        }
+        static renameFolder(folderId, name) {
+          const renamed = TreeModel.renameFolder(folderId, name);
+          if (renamed) {
+            const node = TreeModel.findNode(folderId);
+            if (node) FolderView.updateFolderElement(node.node);
+            StorageService.saveTimersToLocalStorage();
+            CloudSync.interactiveSync();
+          }
+          return renamed;
+        }
+        static handleFolderNameChange(input, folderId) {
+          return this.renameFolder(folderId, input.value);
+        }
+        static handleShareChange(input, timerId) {
+          SessionManager.clearJustAfterResetFlag();
+          const share = Utils.parseShareInput(input.value);
+          if (!Number.isFinite(share)) {
+            TimerView.syncAllProportionInputs();
+            return false;
+          }
+          const ok = TreeModel.setShareLocal(timerId, share);
+          if (ok) {
+            TimerView.syncAllProportionInputs();
+            FolderView.updateAllMeta();
+            if (AppState.getGlobalEndTime()) {
+              TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+            }
+            AppController.calculateRecommendations();
+            StorageService.saveTimersToLocalStorage();
+            CloudSync.bumpControl();
+          }
+          return ok;
+        }
+        /** Общий хвост структурных операций: пересчёт + порядок + облако. */
+        static afterStructureChange() {
+          TimerView.renderTree();
+          FolderView.updateAllMeta();
+          TimerView.syncAllProportionInputs();
+          if (AppState.getGlobalEndTime()) {
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          }
+          CalculationService.updateCalculations();
+          AppController.calculateRecommendations();
+          AppState.notify("displayNeedsUpdate");
+          StorageService.saveTimersToLocalStorage();
+          CloudSync.bumpControl();
+        }
+      }
+
+      // ============================================================
+      //  Модалка «Создать группу» (ТЗ 5.1) — кнопка в меню «Операции».
+      // ============================================================
+      class CreateGroupController {
+        static openModal() {
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          box.appendChild(M.el("div", { class: "modal-title" }, "Создать группу"));
+          const nameRow = M.el("div", { class: "modal-row" });
+          nameRow.appendChild(M.el("label", { for: "createGroupName" }, "Название:"));
+          nameRow.appendChild(
+            M.el("input", {
+              type: "text",
+              id: "createGroupName",
+              placeholder: "Название группы",
+              value: TreeModel.DEFAULT_FOLDER_NAME,
+            })
+          );
+          box.appendChild(nameRow);
+          box.appendChild(
+            M.el(
+              "div",
+              { class: "modal-hint" },
+              "Группа может остаться пустой — задачи и другие группы можно перенести в неё позже (кнопка «В группу»)."
+            )
+          );
+          box.appendChild(M.errorRow());
+          box.appendChild(
+            M.buttonRow("createGroupConfirm", "create-group-confirm", "Создать")
+          );
+          M.context = { type: "create-group" };
+          M.open();
+        }
+        static confirm() {
+          const input = document.getElementById("createGroupName");
+          const name = input ? (input.value || "").trim() : "";
+          ModalController.close();
+          return TreeController.createFolder(name || TreeModel.DEFAULT_FOLDER_NAME);
+        }
+      }
+
+      // ============================================================
+      //  Модалка «В группу» (ТЗ 6) — перенос таймера или группы.
+      //  Если папок ещё нет, предлагаются таймеры: из отмеченных и
+      //  переносимого узла создаётся группа (по подобию ТЗ 5.3.2).
+      // ============================================================
+      class MoveToGroupController {
+        static ROOT_OPTION = "root";
+        static openModal(nodeId, kind) {
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          const what = kind === "folder" ? "группу" : "задачу";
+          box.appendChild(
+            M.el("div", { class: "modal-title" }, `Перенести ${what} в группу`)
+          );
+          const folders = TreeModel.allFolderNodes().filter(
+            node => TreeModel.canMoveInto(nodeId, node.id)
+          );
+          const list = M.el("div", { id: "moveGroupList" });
+          const rootItem = M.el("label", { class: "group-select-item" });
+          rootItem.appendChild(
+            M.el("input", {
+              type: "checkbox",
+              class: "move-checkbox move-root",
+              value: this.ROOT_OPTION,
+            })
+          );
+          rootItem.appendChild(document.createTextNode(" Вне группы (в корень)"));
+          list.appendChild(rootItem);
+          if (folders.length) {
+            folders.forEach(node => {
+              const item = M.el("label", { class: "group-select-item" });
+              item.appendChild(
+                M.el("input", {
+                  type: "checkbox",
+                  class: "move-checkbox move-folder",
+                  "data-folder-id": String(node.id),
+                })
+              );
+              const name = node.name ? node.name : "(без названия)";
+              item.appendChild(
+                document.createTextNode(
+                  ` 📁 ${name} · цель ${Number(
+                    TreeModel.nodeTarget(node)
+                  ).toFixed(3)}`
+                )
+              );
+              list.appendChild(item);
+            });
+          } else {
+            list.appendChild(
+              M.el(
+                "div",
+                { class: "modal-hint" },
+                "Групп пока нет. Отметьте задачи — они вместе с переносимой образуют новую группу:"
+              )
+            );
+            AppState.getTimers().forEach(timer => {
+              if (TreeModel.sameId(timer.id, nodeId)) return;
+              const loc = TreeModel.findNode(timer.id);
+              if (!loc) return;
+              // потомков переносимой папки не показываем: они уже внутри
+              if (kind === "folder" && TreeModel.findNode(nodeId)) {
+                const inside = TreeModel.descendantTimerIds(
+                  TreeModel.findNode(nodeId).node
+                ).some(id => TreeModel.sameId(id, timer.id));
+                if (inside) return;
+              }
+              const item = M.el("label", { class: "group-select-item" });
+              item.appendChild(
+                M.el("input", {
+                  type: "checkbox",
+                  class: "move-checkbox move-timer",
+                  "data-timer-id": String(timer.id),
+                })
+              );
+              item.appendChild(
+                document.createTextNode(
+                  ` ${timer.name ? timer.name : "(без названия)"} · цель ${Number(
+                    timer.targetProportion
+                  ).toFixed(3)}`
+                )
+              );
+              list.appendChild(item);
+            });
+          }
+          box.appendChild(list);
+          const nameRow = M.el("div", { class: "modal-row" });
+          nameRow.appendChild(
+            M.el("label", { for: "moveGroupName" }, "Название новой группы:")
+          );
+          nameRow.appendChild(
+            M.el("input", {
+              type: "text",
+              id: "moveGroupName",
+              value: TreeModel.DEFAULT_FOLDER_NAME,
+            })
+          );
+          box.appendChild(nameRow);
+          box.appendChild(M.errorRow());
+          box.appendChild(M.buttonRow("moveConfirm", "move-confirm", "Перенести"));
+          M.context = { type: "move", nodeId, kind };
+          M.open();
+        }
+        static confirm() {
+          const ctx = ModalController.context;
+          if (!ctx || ctx.type !== "move") return false;
+          const checked = [...document.querySelectorAll(".move-checkbox:checked")];
+          if (!checked.length) {
+            ModalController.setError("Отметьте, куда перенести");
+            return false;
+          }
+          const rootChosen = checked.some(cb => cb.classList.contains("move-root"));
+          const folderBoxes = checked.filter(cb =>
+            cb.classList.contains("move-folder")
+          );
+          const timerBoxes = checked.filter(cb =>
+            cb.classList.contains("move-timer")
+          );
+          const name = (
+            (document.getElementById("moveGroupName") || {}).value || ""
+          ).trim();
+          ModalController.close();
+          if (folderBoxes.length) {
+            return TreeController.moveToFolder(
+              ctx.nodeId,
+              parseFloat(folderBoxes[0].getAttribute("data-folder-id"))
+            );
+          }
+          if (timerBoxes.length) {
+            const ids = timerBoxes.map(cb =>
+              parseFloat(cb.getAttribute("data-timer-id"))
+            );
+            ids.push(Number(ctx.nodeId));
+            const folder = TreeModel.wrapNodesIntoFolder(
+              ids,
+              name || TreeModel.DEFAULT_FOLDER_NAME
+            );
+            TreeController.afterStructureChange();
+            return Boolean(folder);
+          }
+          if (rootChosen) {
+            return TreeController.moveToFolder(ctx.nodeId, null);
+          }
+          return false;
         }
       }
       class MenuController {
@@ -3478,8 +4903,32 @@
           }
           return null;
         }
+        static getFolderIdFromElement(element) {
+          // Элемент внутри карточки таймера не относится к папке, даже если
+          // карточка лежит внутри .folder-node (иначе клики таймера
+          // маршрутизировались бы как клики его группы).
+          if (!element || !element.closest) return null;
+          if (element.closest(".timer-container")) return null;
+          const folderEl = element.closest(".folder-node");
+          if (!folderEl) return null;
+          const id = Number(folderEl.getAttribute("data-folder-id"));
+          return Number.isFinite(id) ? id : null;
+        }
         static generateId() {
           return Date.now() + Math.random();
+        }
+        static uniqueId() {
+          // id папок и таймеров живут в одном числовом пространстве, поэтому
+          // новый id проверяется на столкновение с существующими узлами.
+          let id = this.generateId();
+          let guard = 0;
+          while (
+            guard++ < 32 &&
+            (AppState.findTimerById(id) || TreeModel.findNode(id))
+          ) {
+            id = this.generateId();
+          }
+          return id;
         }
       }
       // ============================================================

@@ -616,3 +616,78 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
   `#timersContainer` → flex-direction: column (сущности в ряд вертикально, ТЗ 8.1).
 - УБИРАЕМ (ТЗ 4): `.sibling-highlight` + mouseover/mouseout + `highlightSiblings`, строку `split-share-container`
   с «← «родитель»», поля splitShare/splitId/splitParentName.
+
+## 43. Журнал задачи 4 (действия 162–187)
+- 162: conspect — ТЗ, состояние, план, предварительные решения (разделы 37–40) + commit/push a1707ed.
+- 163: прочитан uploads/Требования-группы.md (18 905 Б, 221 строка) — 10 разделов ТЗ.
+- 164: tests/harness.js (385 строк) — collectGlobals() фиксированный (throw при отсутствии), ctx.reset() чистит
+  AppState.timers/observers/…, addTimer() → AppState.addTimer → timerAdded → карточка; click/change/tick; setup().
+- 165: tests/regression.test.js — scene() = A(0.6)/B(0.4) + «Конец»; card.className = /^timer-container( collapsed)?$/;
+  deleteTimer → ренормализация к 1; split → splitShare/splitId/splitParentName; createTaskInGroup([a,b],'C','0.5')
+  → 0.3/0.2/0.5 и «виртуальная история» 1000; модалки: .group-checkbox ×2, #splitRows .split-row ×2.
+- 166: tests/compact-mode.test.js — COLLAPSED_VISIBLE/HIDDEN (строки = ПРЯМЫЕ дети карточки),
+  card.firstElementChild = .compact-toggle-container и его firstElementChild = стрелка; CSS-правила проверяются
+  ПОДСТРОКОЙ (html.includes); APP_VERSION ~ /-compact$/; :352 — toggleCompact не меняет meaningfulProjection.
+- 167: tests/auto-away.test.js + integration.test.js — CRLF всего файла, один <script>, `<div id="timersContainer"></div>`,
+  список 24 классов, splitId в 2 местах, кнопки панели.
+- 168: TimerModel (1616–1806): createTimer — схема полей (proportion/targetProportion = 1 по умолчанию), трекинг-снимки.
+- 169: TimerController (1315–1615): диспетчер кликов/changes, toggleTracking, updateDenominator, deleteTimer.
+- 170: TimerView (2217–2816): addTimerElement/createTimerContainer/appendTimerElements (порядок строк карточки),
+  компактный режим, updateDisplay/updateTimer*, syncProportionInputs.
+- 171: MenuController/ModalController/AddTaskController/GroupTaskController/SplitController (3006–3400):
+  маршрутизация по data-modal-action, .group-checkbox, #splitRows.
+- 172: UIFactory/Utils (3400–3499): formatTime, parseShareInput (0.25 и 1/4, мусор → NaN), getTimerIdFromElement,
+  generateId = Date.now()+Math.random().
+- 173: CloudSync (3485–3830): STATE_KEYS (11), meaningfulProjection — таймеры СОРТИРУЮТСЯ по id ⇒ порядок в облако
+  не попадает (подтверждает ТЗ 10.1 «сейчас он не идентичный»); snapshotContentHash; applySnapshot.
+- 174: StorageService.loadTimersFromLocalStorage/restoreGlobalEndTime/export/import (1180–1315): экспорт = массив
+  таймеров PropTimerz_<дата>.json; импорт через parseTimersJSON + container.innerHTML="".
+- 175: TimeManager (2817–3005) — авто-away; CalculationService (2073–2216) — тик 200 мс; ProportionCalculator/
+  PriorityCalculator (1807–2072) — рекомендации/приоритеты (плоские по всем таймерам, дерево их не меняет).
+- 176: резервная копия /tmp/index.before-groups.html (229 460 Б, sha256 15e967d7…) — база для A/B.
+- 177: написан новый модуль /tmp/g/tree_block.js (1171 строка): TreeModel, FolderView, TreeController,
+  CreateGroupController, MoveToGroupController.
+- 178: чистка модуля (setTargetGlobal — убран мусорный fW; wrapNodesIntoFolder — корректная вставка на место первого
+  узла; canMoveInto — без неиспользуемого; moveToFolder — без пустого if) + проверка синтаксиса vm.Script — OK.
+- 179: patch1.py применён: CSS (#timersContainer → колонка; .split-share/.sibling-highlight → стили папок/доли/
+  стрелок), кнопка «Создать группу» в #operationsMenu, APP_VERSION → 2026-11-01-groups, убраны mouseover/mouseout +
+  highlightSiblings, action create-group в диспетчере панели, AppState.tree + getTree/setTree, Utils.uniqueId,
+  блок модуля вставлен перед class MenuController. Файл 256 290 Б, синтаксис OK.
+- 180: patch2.py применён: подписка treeChanged → renderTree; addTimerElement/createTimerElement/renderTree/
+  reconcileChildren; строка «Доля» (share-container compact-visible) + стрелки ↑/↓ в ряд со стрелкой компактного
+  режима; createShareElements/updateTimerShare/syncAllProportionInputs; updateDisplay обновляет доли и мета папок;
+  handleTimerRemoved перестраивает дерево. Файл 260 506 Б.
+- 181: patch3.py: класс TreeMoveView (общие стрелки ↑/↓), FolderView.moveButtons → делегирует, опечатка в комментарии.
+  Синтаксис OK (261 065 Б).
+- 182: grep — тесты НЕ проверяют export/import (формат можно расширять); STATE_KEYS используется в 3 местах.
+- 183: patch4.py — ПРОВАЛ на последнем блоке (неточный текст createTaskInGroup), файл НЕ записан (атомарно).
+- 184: извлечён точный текст createTaskInGroup из файла (repr, CRLF).
+- 185: patch4.py исправлен и применён ЦЕЛИКОМ: Utils.getFolderIdFromElement; диспетчер кликов (toggle-folder —
+  визуальное без autoUpdate; move-up/move-down; to-group; delete-folder); change (folder-name, share);
+  handleTargetProportionChange → TreeModel.setTargetGlobal (ТЗ 3.7); deleteTimer → перерасчёт только своего уровня
+  (ТЗ 7.2); addNewTimer → createTaskInRoot; новые createTaskInRoot/createTaskInFolder/createTaskInLevel;
+  createTaskInGroup → папки или (если их нет) таймеры с созданием папки. Файл 266 254 Б, синтаксис OK.
+- 186: извлечён точный текст splitTimer (для patch5).
+- 187: пользователь прервал ответ — напомнил про правила conspect (нумерация действия ПЕРЕД каждым вызовом
+  инструмента и ответом, обновление файла каждые 10 действий). Инструкция перечитана: diff с прежней — ИДЕНТИЧНА.
+
+## 44. Текущее состояние index.html (после патчей 1–4, НЕзакоммичено)
+- Применено: CSS/разметка/версия/EventService/AppState.tree/Utils.uniqueId + модуль дерева (TreeModel, TreeMoveView,
+  FolderView, TreeController, CreateGroupController, MoveToGroupController) + TimerView (renderTree, «Доля», ↑/↓) +
+  TimerController (диспетчер, цель глобально, удаление по уровню) + AppController (root/folder/group-создание).
+- ЕЩЁ НЕ применено (patch5/6): splitTimer → папка (сейчас всё ещё пишет splitShare/splitId/splitParentName);
+  кнопка «В группу» на карточке + CSS-исключение для свёрнутого вида; SplitController (поле имени папки);
+  GroupTaskController (выбор папок); ModalController (create-group-confirm/move-confirm);
+  StorageService (tree в LS/экспорт/импорт/чистка legacy-полей); CloudSync (STATE_KEYS += tree,
+  meaningfulProjection += tree БЕЗ сортировки); AppController.init (renderTree).
+- Промежуточное состояние синтаксически валидно, но функционально НЕ полно: до завершения patch5 тесты не гоняю.
+
+## 45. Намерение (действия 189+)
+- 189: patch5.py — дописать оставшиеся правки кода (список выше) одним атомарным скриптом + проверка синтаксиса.
+- 190: harness.js — collectGlobals += новые классы; ctx.reset() чистит AppState.tree и FolderView.collapsedFolders;
+  ctx.addTimer() не ломается; возможно хелперы addFolder/flatten для новых тестов.
+- 191: npm test → снять список поломок; разобрать каждую: ошибка реализации или тест про УБРАННОЕ поведение (ТЗ 4).
+- 192: правка 5 существующих тестов под новое поведение (версия -groups, splitShare/splitId, «Доля» в свёрнутой
+  карточке) с комментариями «изменено по ТЗ 4.4/3.4.4».
+- 193+: новый tests/groups.test.js — доли/цели/папки/перенос/перемещения/удаление/порядок+sync (много, вкл. регрессионные).
+- далее: A/B против /tmp/index.before-groups.html, live-preview, conspect каждые 10 действий, commit+push после ответа.
