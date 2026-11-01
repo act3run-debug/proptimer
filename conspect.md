@@ -484,6 +484,8 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
   `~/.git-credentials`, chmod 600, вне снапшота). `git pull --rebase` отработал с ошибкой «unstaged changes»
   (conspect.md был уже изменён) → вместо него commit + push: **13cc973..dc64570 main → main, УСПЕШНО**.
   Конфликтов нет (remote за сессию не двигался).
+- 161: правка журнала (этот блок, находка про pull --rebase) → commit + push: **dc64570..e6831e8**, `git status` чист.
+- ИТОГ сессии 3: код не менялся; HEAD в origin/main = e6831e8; 135/135 тестов зелёные; ответ пользователю дан.
 
 ## 35. Находки среды (сессия 3)
 - Рабочий каталог bash — workspace (`/tmp/arena/tenants/…/sessions/…/workspace`), НЕ `/home/user`;
@@ -492,6 +494,8 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
 - Неглубокий клон (`--depth 1`) обрезает историю → для отчёта нужен `git fetch --unshallow`.
 - `npm install`/`node_modules` НЕ переживают сессию (как и раньше): после восстановления окружения тесты
   запускаются только после повторного `npm install` (Node в песочнице есть, `node --test`).
+- `git pull --rebase` ОТКАЗЫВАЕТСЯ работать при незакоммиченных изменениях («cannot pull with rebase: You have
+  unstaged changes») — правильный порядок в этой среде: `git add -A` → `git commit` → `git pull --rebase` → `git push`.
 - В workspace-корне заведён `.gitignore` с `repo/` — чтобы вложенный клон не попал в коммит как gitlink.
 
 ## 36. Итог сессии 3
