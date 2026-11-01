@@ -210,7 +210,7 @@ test("в свёрнутом виде видны ровно строки из Т�
   ctx.close();
 });
 
-test("в свёрнутой карточке видна только кнопка Старт/Пауза", () => {
+test("в свёрнутой карточке видны только Старт/Пауза и «В группу»", () => {
   const { ctx, a } = scene();
   assert.ok(shown(ctx, buttonByAction(ctx, a, "track")), "Старт видна");
   for (const action of ["reset", "delete", "update", "split"]) {
@@ -218,6 +218,8 @@ test("в свёрнутой карточке видна только кнопк�
     assert.ok(btn, `кнопка ${action} существует в DOM`);
     assert.equal(shown(ctx, btn), false, `кнопка ${action} скрыта`);
   }
+  // ТЗ 6.1: кнопка «В группу» доступна и в свёрнутой карточке.
+  assert.ok(shown(ctx, buttonByAction(ctx, a, "to-group")), "«В группу» видна");
   // Кнопки «Применить» ручного ввода скрыты вместе со своими строками.
   for (const action of ["apply-tracked", "apply-total"]) {
     const btn = card(ctx, a).querySelector(`[data-action="${action}"]`);
@@ -265,10 +267,16 @@ test("в развёрнутой карточке видно всё", () => {
   for (const action of ["track", "reset", "delete", "update", "split"]) {
     assert.ok(shown(ctx, buttonByAction(ctx, a, action)), `кнопка ${action} видна`);
   }
+  // Строка «Доля» у корневых задач не показывается ВОВСЕ (ТЗ 3.4.2: в корне
+  // доля численно равна целевой пропорции) — она скрыта независимо от
+  // сворачивания, поэтому в подсчёте её не учитываем.
+  const shareRow = ctx.shareRow(a);
+  const shareApplicable = shareRow && shareRow.style.display !== "none";
+  assert.equal(shareApplicable, false, "в корне доля не показывается");
   assert.equal(
     visibleRows(ctx, a).length,
-    card(ctx, a).children.length,
-    "скрытых строк не осталось"
+    card(ctx, a).children.length - (shareApplicable ? 0 : 1),
+    "скрытых строк не осталось (кроме «Доли», которой в корне нет)"
   );
   ctx.close();
 });
@@ -510,7 +518,7 @@ test("карточки, восстановленные из localStorage, тож
   ctx.close();
 });
 
-test("подзадачи разбиения создаются свёрнутыми, их «Доля» скрыта до раскрытия", () => {
+test("подзадачи разбиения свёрнуты, а их «Доля» видна и в свёрнутом виде", () => {
   const { ctx, a } = scene();
   const children = ctx.AppController.splitTimer(a.id, [
     { name: "A1", share: 1 },
@@ -519,12 +527,16 @@ test("подзадачи разбиения создаются свёрнуты�
   assert.equal(children.length, 2);
   for (const child of children) {
     assert.equal(isCollapsed(ctx, child), true, `${child.name} свёрнута`);
-    const share = row(ctx, child, "split-share-container");
+    const share = ctx.shareRow(child);
     assert.ok(share, "строка доли создана");
-    assert.equal(display(ctx, share), "none", "в свёрнутом виде доля скрыта");
+    // ТЗ 3.4.4: доля показывается и в свёрнутой карточке. Подзадачи лежат
+    // в папке и их две, поэтому доля показана (в корне — нет, ТЗ 3.4.2).
+    assert.ok(isVisible(ctx, share), "доля видна в свёрнутом виде");
+    assert.ok(shown(ctx, ctx.shareInput(child)), "поле доли доступно для ввода");
   }
+  assert.ok(Math.abs(ctx.shareValue(children[0]) - 1 / 3) < 1e-9, "доля = доля разбиения (ТЗ 5.2.5)");
   ctx.TimerView.toggleCompact(children[0].id);
-  assert.ok(isVisible(ctx, row(ctx, children[0], "split-share-container")), "доля показана");
+  assert.ok(isVisible(ctx, ctx.shareRow(children[0])), "доля видна и в развёрнутой");
   assert.equal(isCollapsed(ctx, children[1]), true, "вторая подзадача не затронута");
   ctx.close();
 });
@@ -573,8 +585,8 @@ test("API компактного режима и метка версии на м
   const { ctx } = scene();
   assert.match(
     ctx.APP_VERSION,
-    /^\d{4}-\d{2}-\d{2}-compact$/,
-    "метка версии отражает компактный режим"
+    /^\d{4}-\d{2}-\d{2}-(compact|groups)$/,
+    "метка версии: компактный режим карточек, затем — группы (папки)"
   );
   assert.equal(ctx.TimerView.COMPACT_DOWN, ARROW_DOWN);
   assert.equal(ctx.TimerView.COMPACT_UP, ARROW_UP);

@@ -66,10 +66,13 @@ function collectGlobals() {
     "CalculationService",
     "CloudController",
     "CloudSync",
+    "CreateGroupController",
     "EventService",
+    "FolderView",
     "GroupTaskController",
     "MenuController",
     "ModalController",
+    "MoveToGroupController",
     "NotificationService",
     "PriorityCalculator",
     "ProportionCalculator",
@@ -84,6 +87,9 @@ function collectGlobals() {
     "TimerView",
     "TimeZoneHolder",
     "UIFactory",
+    "TreeController",
+    "TreeModel",
+    "TreeMoveView",
     "Utils",
   ];
 }
@@ -237,6 +243,14 @@ function createContext(opts = {}) {
     reset() {
       window.localStorage.clear();
       app.AppState.timers = [];
+      // Дерево (папки и порядок) — часть состояния приложения
+      app.AppState.tree = [];
+      if (app.FolderView && app.FolderView.collapsedFolders) {
+        app.FolderView.collapsedFolders.clear();
+      }
+      if (app.TimerView && app.TimerView.expandedTimers) {
+        app.TimerView.expandedTimers.clear();
+      }
       app.AppState.observers = {};
       app.AppState.globalEndTime = null;
       app.AppState.initialAvailable = 0;
@@ -278,6 +292,66 @@ function createContext(opts = {}) {
     },
     card(timer) {
       return app.AppState.getTimerElement(timer.id);
+    },
+    // --- дерево (папки, доли, перемещения) -----------------------------
+    /** id карточки таймера или число — возвращает элемент карточки. */
+    cardById(id) {
+      return ctx.document.getElementById(`timer-${id}`);
+    },
+    folderEl(folder) {
+      const id = typeof folder === "object" ? folder.id : folder;
+      return ctx.document.getElementById(`folder-${id}`);
+    },
+    folderChildrenEl(folder) {
+      const id = typeof folder === "object" ? folder.id : folder;
+      return ctx.document.getElementById(`folder-children-${id}`);
+    },
+    /** Создать папку в модели (без модалки) и вернуть её узел. */
+    addFolder(name = "Папка", parentNode = null) {
+      const node = app.TreeModel.createFolder(name, parentNode || null);
+      app.TimerView.renderTree();
+      return node;
+    },
+    /** Перенести узел (таймер или папку) в папку; folderId=null — в корень. */
+    moveToFolder(nodeId, folderId) {
+      return app.TreeController.moveToFolder(nodeId, folderId);
+    },
+    /** Плоский порядок дерева: [{kind,id,depth}] — как его видит пользователь. */
+    flat() {
+      return app.TreeModel.flatten().map(x => ({
+        kind: x.kind,
+        id: x.id,
+        depth: x.depth,
+      }));
+    },
+    /** Порядок КОРНЕВЫХ id (таймеры и папки вперемешку). */
+    rootOrder() {
+      return app.TreeModel.root().map(n => Number(n.id));
+    },
+    shareInput(timer) {
+      return ctx.document.getElementById(`share-${timer.id}`);
+    },
+    shareRow(timer) {
+      return ctx.document.getElementById(`share-row-${timer.id}`);
+    },
+    shareValue(timer) {
+      return app.TreeModel.shareOf(timer.id);
+    },
+    moveButton(node, dir) {
+      const id = typeof node === "object" ? node.id : node;
+      const isFolder = app.TreeModel.isFolder(app.TreeModel.findNode(id).node);
+      const host = isFolder ? ctx.folderEl(id) : ctx.cardById(id);
+      if (!host) return null;
+      return [...host.querySelectorAll("button")].find(
+        b =>
+          b.getAttribute("data-action") === (dir === "down" ? "move-down" : "move-up")
+      ) || null;
+    },
+    sumTargets() {
+      return app.AppState.getTimers().reduce(
+        (s, t) => s + (Number(t.targetProportion) || 0),
+        0
+      );
     },
     cardText(timer, kind) {
       const el = ctx.elementOf(timer, kind);

@@ -200,7 +200,7 @@ test("«Удалить» убирает карточку и ренормализ
   ctx.close();
 });
 
-test("«Разбить» делит историю пропорционально долям и связывает подзадачи", () => {
+test("«Разбить» делит историю пропорционально долям и складывает подзадачи в папку", () => {
   const { ctx, a, document } = scene();
   a.trackedSeconds = 900;
   a.dailyTotalSeconds = 900;
@@ -215,10 +215,17 @@ test("«Разбить» делит историю пропорциональн�
   const [c1, c2] = children;
   assert.ok(Math.abs(c1.trackedSeconds - 300) < EPS, `факт A1 = ${c1.trackedSeconds}`);
   assert.ok(Math.abs(c2.trackedSeconds - 600) < EPS, `факт A2 = ${c2.trackedSeconds}`);
-  assert.ok(Math.abs(c1.splitShare - 1 / 3) < EPS);
-  assert.ok(Math.abs(c2.splitShare - 2 / 3) < EPS);
-  assert.equal(c1.splitId, c2.splitId);
-  assert.equal(c1.splitParentName, "A");
+  // ТЗ 4.4: доля больше НЕ хранится как результат разбиения — она выводится
+  // из целевых пропорций. ТЗ 5.2: подзадачи автоматически группируются
+  // в папку, название которой по умолчанию = имя таймера (ТЗ 5.2.3).
+  assert.ok(Math.abs(ctx.shareValue(c1) - 1 / 3) < EPS, `доля A1 = ${ctx.shareValue(c1)}`);
+  assert.ok(Math.abs(ctx.shareValue(c2) - 2 / 3) < EPS, `доля A2 = ${ctx.shareValue(c2)}`);
+  const p1 = ctx.TreeModel.parentOf(c1.id);
+  const p2 = ctx.TreeModel.parentOf(c2.id);
+  assert.ok(p1 && ctx.TreeModel.isFolder(p1), "подзадачи лежат в папке");
+  assert.equal(p1, p2, "папка на обе подзадачи одна");
+  assert.equal(p1.name, "A", "имя папки по умолчанию — имя исходного таймера");
+  assert.equal(c1.splitShare, undefined, "поле доли разбиения больше не хранится");
   assert.equal(c1.isTracking, false, "трекинг у подзадач сброшен");
   ctx.close();
 });
@@ -229,8 +236,9 @@ test("доли разбиения нормализуются к сумме 1", (
     { name: "X", share: 5 },
     { name: "Y", share: 15 },
   ]);
-  const sum = children.reduce((s, c) => s + c.splitShare, 0);
+  const sum = children.reduce((s, c) => s + ctx.shareValue(c), 0);
   assert.ok(Math.abs(sum - 1) < EPS, `сумма долей ${sum}`);
+  // ТЗ 3.2.2: сумма долей сиблингов одного родителя равна 1
   ctx.close();
 });
 

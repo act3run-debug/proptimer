@@ -130,7 +130,8 @@
       .timer-container.collapsed > *:not(.compact-visible) {
         display: none;
       }
-      .timer-container.collapsed .buttons-container button:not([data-action="track"]) {
+      /* «В группу» (ТЗ 6.1) остаётся доступной и в свёрнутой карточке */
+      .timer-container.collapsed .buttons-container button:not([data-action="track"]):not([data-action="to-group"]) {
         display: none;
       }
       /* Операции: кнопка меню справа, выпадающее меню, модальные окна,
@@ -560,6 +561,10 @@
           EventService.setupEventDelegation();
           this.setupIntervalUpdates();
           this.setupEventSubscriptions();
+          // Дерево: порядок и вложенность из сохранённого состояния (или из
+          // порядка списка таймеров, если ключа "tree" ещё нет)
+          TreeModel.ensureTimerNodes();
+          TimerView.renderTree();
           // Носитель часового пояса: индикация + заявление при отсутствии
           TimeZoneHolder.ensure();
         }
@@ -692,10 +697,16 @@
           }
           return this.createTaskInFolder(folderId, name, share);
         }
-        static splitTimer(timerId, specs) {
-          // «Разбить задачу на подзадачи» (механика py-скрипта split_task,
-          // исправленная: ВСЕ счётчики времени делятся пропорционально долям,
-          // а не копируются целиком; счётчики трекинга сбрасываются).
+        static splitTimer(timerId, specs, folderName) {
+          // «Разбить задачу на подзадачи»: ВСЕ счётчики времени делятся
+          // пропорционально долям (а не копируются целиком), счётчики трекинга
+          // сбрасываются. По ТЗ 5.2 подзадачи автоматически группируются
+          // в папку на месте исходного таймера: название папки предлагается
+          // в модалке, по умолчанию — имя таймера, из которого разбивали.
+          // Целевые пропорции подзадач делятся в указанных долях, поэтому
+          // доли внутри новой папки равны долям разбиения (ТЗ 5.2.5), но
+          // отдельным полем они больше НЕ хранятся — доля выводится из целей
+          // и пересчитывается при любом изменении состава (ТЗ 4.4).
           SessionManager.clearJustAfterResetFlag();
           const timers = AppState.getTimers();
           const index = timers.findIndex(t => t.id === timerId);
@@ -703,9 +714,6 @@
           const parent = timers[index];
           const totalShare = specs.reduce((sum, x) => sum + x.share, 0);
           if (!(totalShare > 0)) return null;
-          const splitId = `split-${Date.now()}-${Math.random()
-            .toString(36)
-            .slice(2, 8)}`;
           const children = specs.map(spec => {
             const share = spec.share / totalShare; // нормализация к сумме 1
             const child = {
@@ -732,23 +740,46 @@
               trackingSnapshot: null,
               lastResetTime: new Date(),
               shouldUpdateProportion: false,
-              splitShare: share,
-              splitId: splitId,
-              splitParentName: parent.name || "",
             };
             delete child.lastSessionDisplayProportion;
+            // Наследие прежнего разбиения (ТЗ 4.4): доля больше не поле модели
+            delete child.splitShare;
+            delete child.splitId;
+            delete child.splitParentName;
             return child;
           });
           const newTimers = timers
             .slice(0, index)
             .concat(children, timers.slice(index + 1));
+          const folderTitle =
+            folderName === undefined ||
+            folderName === null ||
+            String(folderName).trim() === ""
+              ? parent.name || ""
+              : String(folderName).trim();
+          // Дерево меняем ДО обновления модели таймеров и БЕЗ оповещения:
+          // иначе renderTree выбросил бы узлы ещё не созданных подзадач.
+          const loc = TreeModel.findNode(timerId);
+          const folderNode = TreeModel.createFolderNode(folderTitle);
+          children.forEach(child =>
+            folderNode.children.push(TreeModel.createTimerNode(child.id))
+          );
+          if (loc) {
+            loc.siblings.splice(loc.index, 1, folderNode);
+          } else {
+            TreeModel.root().push(folderNode);
+          }
           AppState.setTimers(newTimers);
-          AppState.notify("timerRemoved", parent); // убрать карточку родителя
-          children.forEach(child => TimerView.addTimerElement(child));
+          TimerView.forgetCompactState(timerId);
+          TreeModel.changed();
+          // Одна перерисовка: карточка родителя уходит сама (её узла нет
+          // в дереве), карточки подзадач создаются внутри папки.
+          TimerView.renderTree();
           if (AppState.getGlobalEndTime()) {
             TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
           }
           CalculationService.updateCalculations();
+          TimerView.syncAllProportionInputs();
           this.autoUpdate();
           CloudSync.bumpControl();
           return children;
@@ -1063,6 +1094,13 @@
           }));
           const timersJSON = JSON.stringify(timersData);
           this.setItemToLocalStorage("timers", timersJSON);
+          // Дерево (папки + порядок) — часть состояния: без него порядок
+          // задач не пережил бы перезагрузку и не уехал бы в облако (ТЗ 10.1).
+          TreeModel.ensureTimerNodes();
+          this.setItemToLocalStorage(
+            "tree",
+            JSON.stringify(AppState.getTree())
+          );
           // Фикс БАГ #2: сохраняем также время "Конца". Раньше оно терялось
           // при перезагрузке, а lastSessionEndTime оставался — из-за этого
           // после перезагрузки за границей сессии начинался бесконечный сброс.
@@ -1101,7 +1139,10 @@
           // AppController.init — иначе приложение оставалось «мёртвым»:
           // обработчики событий и циклы пересчёта не подключались.
           let parsed;
-          try {
+          if (Array.isArray(timersJSON)) {
+            // Импорт формата v2 передаёт уже разобранный массив
+            parsed = timersJSON;
+          } else try {
             parsed = JSON.parse(timersJSON);
           } catch (error) {
             console.error(
@@ -1200,6 +1241,11 @@
               : null;
           const resetDate = this.storageDateOrNull(raw.lastResetTime);
           timer.lastResetTime = resetDate ? resetDate : new Date();
+          // Наследие разбиения до появления папок (ТЗ 4.4): доля выводится
+          // из целей, а принадлежность видна из дерева — поля не нужны.
+          delete timer.splitShare;
+          delete timer.splitId;
+          delete timer.splitParentName;
           return timer;
         }
         static loadFromLocalStorage() {
@@ -1211,6 +1257,13 @@
           // инициализацию, а неполные/мусорные записи не загрязняют модель.
           const loadedTimers = this.parseTimersJSON(timersJSON);
           AppState.setTimers(loadedTimers);
+          // Дерево из сохранения; если ключа нет (старое сохранение) или он
+          // битый — порядок восстанавливается из порядка списка таймеров.
+          const treeRaw = this.getItemFromLocalStorage("tree");
+          AppState.setTree(
+            TreeModel.sanitizeTree(this.parseTreeJSON(treeRaw))
+          );
+          TreeModel.ensureTimerNodes();
           const wasTimerActive = this.getItemFromLocalStorage("wasTimerActive");
           if (wasTimerActive === "true") {
             // Зеркалируемый трекинг переживает перезагрузку:
@@ -1311,6 +1364,17 @@
           const totalWeight = CalculationService.calculateTotalWeight(timers);
           CalculationService.updateTimerPlans(timers, remaining, null, totalWeight);
         }
+        static parseTreeJSON(raw) {
+          if (!raw) return [];
+          if (Array.isArray(raw)) return raw;
+          try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch (error) {
+            console.error("Сохранённое дерево повреждено (JSON):", error && error.message);
+            return [];
+          }
+        }
         static exportTimersToFile() {
           const timers = AppState.getTimers();
           const timersData = timers.map(timer => ({
@@ -1327,7 +1391,16 @@
               ? timer.lastResetTime.getTime()
               : null,
           }));
-          const timersJSON = JSON.stringify(timersData, null, 2);
+          // Формат v2: таймеры + дерево (папки и порядок). Импорт понимает и
+          // прежний формат (просто массив) — тогда дерево строится по порядку.
+          const payload = {
+            version: 2,
+            appVersion: APP_VERSION,
+            exportedAt: new Date(CloudSync.serverNow()).toISOString(),
+            tree: AppState.getTree(),
+            timers: timersData,
+          };
+          const timersJSON = JSON.stringify(payload, null, 2);
           const now = new Date();
           const dateStr = now
             .toISOString()
@@ -1357,12 +1430,30 @@
               try {
                 const timersJSON = event.target.result;
                 // Фикс БАГ #8/#9: импорт проходит через тот же санитайзер,
-                // что и загрузка из localStorage.
+                // что и загрузка из localStorage. Формат v2 (объект с tree)
+                // и прежний (массив таймеров) поддерживаются оба.
+                let imported = null;
+                try {
+                  imported = JSON.parse(timersJSON);
+                } catch (error) {
+                  imported = null;
+                }
+                const isV2 =
+                  imported && !Array.isArray(imported) && typeof imported === "object";
+                const timersSource = isV2
+                  ? imported.timers || []
+                  : Array.isArray(imported)
+                    ? imported
+                    : timersJSON;
                 const loadedTimers =
-                  StorageService.parseTimersJSON(timersJSON);
+                  StorageService.parseTimersJSON(timersSource);
                 const timersContainer = AppState.getTimersContainerElement();
                 timersContainer.innerHTML = "";
                 AppState.setTimers(loadedTimers);
+                AppState.setTree(
+                  TreeModel.sanitizeTree(isV2 ? imported.tree : [])
+                );
+                TreeModel.ensureTimerNodes();
                 AppState.getTimers().forEach(timer => {
                   TimerView.addTimerElement(timer);
                   const targetProportionInput =
@@ -2585,9 +2676,12 @@
           //     родителя (ТЗ 3.1). Показывается только внутри группы и только
           //     если у сущности есть сиблинги (ТЗ 3.4.2/3.4.3); в свёрнутой
           //     карточке доля видна (ТЗ 3.4.4).
-          makeContainer("share-container compact-visible", [
+          // id строки — на самом контейнере строки (прямом ребёнке карточки):
+          // именно его скрывает updateTimerShare, когда доля не показывается.
+          const shareRow = makeContainer("share-container compact-visible", [
             this.createShareElements(timer),
           ]);
+          shareRow.id = `share-row-${timer.id}`;
           // 3. Основное время: План / Факт / Осталось / Всего
           makeContainer("planned-display-container", [
             elements.plannedDisplay,
@@ -2631,6 +2725,7 @@
             elements.deleteButton,
             elements.updateButton,
             elements.splitButton,
+            elements.toGroupButton,
           ]);
         }
         // ----------------------------------------------------------
@@ -2720,7 +2815,6 @@
         static createShareElements(timer) {
           const box = document.createElement("div");
           box.className = "share-box";
-          box.id = `share-row-${timer.id}`;
           const label = document.createElement("label");
           label.className = "field-label";
           label.textContent = "Доля:";
@@ -2861,7 +2955,15 @@
           const deleteButton = this.createDeleteButton(timer);
           const updateButton = this.createUpdateButton(timer);
           const splitButton = this.createSplitButton(timer);
-          return [trackButton, resetButton, deleteButton, updateButton, splitButton];
+          const toGroupButton = this.createToGroupButton(timer);
+          return [
+            trackButton,
+            resetButton,
+            deleteButton,
+            updateButton,
+            splitButton,
+            toGroupButton,
+          ];
         }
         static createTrackButton(timer) {
           return UIFactory.createButton(
@@ -2880,6 +2982,12 @@
         }
         static createSplitButton(timer) {
           return UIFactory.createButton("Разбить", "split");
+        }
+        static createToGroupButton(timer) {
+          // ТЗ 6.1: снизу на таймере — кнопка переноса в группу
+          return UIFactory.createButton("В группу", "to-group", {
+            title: "Перенести задачу в группу (папку)",
+          });
         }
         static syncProportionInputs(timer) {
           // Синхронизирует поля «Пропорция (вес)» и «Целевая пропорция» с моделью
@@ -2998,8 +3106,14 @@
           };
         }
         static createButtonElements(timer, inputElements) {
-          const [trackButton, resetButton, deleteButton, updateButton, splitButton] =
-            this.createControlButtons(timer);
+          const [
+            trackButton,
+            resetButton,
+            deleteButton,
+            updateButton,
+            splitButton,
+            toGroupButton,
+          ] = this.createControlButtons(timer);
           const trackedApplyButton = this.createTrackedApplyButton(
             timer,
             inputElements.trackedHoursInput,
@@ -3018,6 +3132,7 @@
             deleteButton,
             updateButton,
             splitButton,
+            toGroupButton,
             trackedApplyButton,
             applyButton,
           };
@@ -4514,6 +4629,10 @@
             SplitController.confirm();
           } else if (action === "split-add-row") {
             SplitController.addRow();
+          } else if (action === "create-group-confirm") {
+            CreateGroupController.confirm();
+          } else if (action === "move-confirm") {
+            MoveToGroupController.confirm();
           } else if (
             typeof action === "string" &&
             action.indexOf("cloud-") === 0
@@ -4590,8 +4709,11 @@
         }
       }
       class GroupTaskController {
-        // «Создать задачу внутри группы» (операция 2 py-скрипта):
-        // группа отмечается галочками — для каждой новой задачи она своя.
+        // «Создать задачу внутри группы» (ТЗ 5.3): выбираются существующие
+        // группы-папки (5.3.1); если папок ещё нет — таймеры (5.3.2), они и
+        // есть визуальная группа, поэтому из отмеченных создаётся папка.
+        // Раздел создания таймера (название + доля внутри группы) сохранён
+        // (5.3.3), а доля трактуется как доля ВНУТРИ папки (5.3.4).
         static openModal() {
           const M = ModalController;
           const box = M.box();
@@ -4600,42 +4722,80 @@
             M.el(
               "div",
               { class: "modal-title" },
-              "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u0437\u0430\u0434\u0430\u0447\u0443 \u0432\u043d\u0443\u0442\u0440\u0438 \u0433\u0440\u0443\u043f\u043f\u044b"
+              "Создать задачу внутри группы"
             )
           );
-          box.appendChild(
-            M.el(
-              "div",
-              {},
-              "\u041e\u0442\u043c\u0435\u0442\u044c\u0442\u0435 \u0433\u0430\u043b\u043e\u0447\u043a\u0430\u043c\u0438 \u0442\u0430\u0439\u043c\u0435\u0440\u044b \u0433\u0440\u0443\u043f\u043f\u044b:"
-            )
-          );
+          const folders = TreeModel.allFolderNodes();
           const list = M.el("div", { id: "groupTaskList" });
-          AppState.getTimers().forEach(t => {
-            const item = M.el("label", { class: "group-select-item" });
-            item.appendChild(
-              M.el("input", {
-                type: "checkbox",
-                class: "group-checkbox",
-                "data-timer-id": String(t.id),
-              })
+          if (folders.length) {
+            box.appendChild(
+              M.el("div", {}, "Отметьте группу-папку для новой задачи:")
             );
-            const name = t.name
-              ? t.name
-              : "(\u0431\u0435\u0437 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044f)";
-            item.appendChild(
-              document.createTextNode(
-                ` ${name} \u00b7 \u0446\u0435\u043b\u044c ${Number(
-                  t.targetProportion
-                ).toFixed(3)}`
+            folders.forEach(node => {
+              const item = M.el("label", { class: "group-select-item" });
+              item.appendChild(
+                M.el("input", {
+                  type: "checkbox",
+                  class: "group-checkbox group-folder",
+                  "data-folder-id": String(node.id),
+                })
+              );
+              const fname = node.name ? node.name : "(без названия)";
+              item.appendChild(
+                document.createTextNode(
+                  ` 📁 ${fname} · цель ${Number(
+                    TreeModel.nodeTarget(node)
+                  ).toFixed(3)}`
+                )
+              );
+              list.appendChild(item);
+            });
+          } else {
+            box.appendChild(
+              M.el(
+                "div",
+                {},
+                "Групп пока нет — отметьте галочками таймеры группы (из них будет создана папка):"
               )
             );
-            list.appendChild(item);
-          });
+            AppState.getTimers().forEach(t => {
+              const item = M.el("label", { class: "group-select-item" });
+              item.appendChild(
+                M.el("input", {
+                  type: "checkbox",
+                  class: "group-checkbox group-timer",
+                  "data-timer-id": String(t.id),
+                })
+              );
+              const tname = t.name ? t.name : "(без названия)";
+              item.appendChild(
+                document.createTextNode(
+                  ` ${tname} · цель ${Number(t.targetProportion).toFixed(3)}`
+                )
+              );
+              list.appendChild(item);
+            });
+          }
           box.appendChild(list);
+          const folderRow = M.el("div", { class: "modal-row" });
+          folderRow.appendChild(
+            M.el(
+              "label",
+              { for: "groupTaskFolderName" },
+              "Название новой группы:"
+            )
+          );
+          folderRow.appendChild(
+            M.el("input", {
+              type: "text",
+              id: "groupTaskFolderName",
+              value: TreeModel.DEFAULT_FOLDER_NAME,
+            })
+          );
+          box.appendChild(folderRow);
           const nameRow = M.el("div", { class: "modal-row" });
           nameRow.appendChild(
-            M.el("label", { for: "groupTaskName" }, "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435:")
+            M.el("label", { for: "groupTaskName" }, "Название:")
           );
           nameRow.appendChild(
             M.el("input", { type: "text", id: "groupTaskName" })
@@ -4646,7 +4806,7 @@
             M.el(
               "label",
               { for: "groupTaskProportion" },
-              "\u0414\u043e\u043b\u044f \u0432\u043d\u0443\u0442\u0440\u0438 \u0433\u0440\u0443\u043f\u043f\u044b (0..1):"
+              "Доля внутри группы (0..1):"
             )
           );
           shareRow.appendChild(
@@ -4662,7 +4822,7 @@
             M.buttonRow(
               "groupTaskConfirm",
               "group-confirm",
-              "\u0421\u043e\u0437\u0434\u0430\u0442\u044c"
+              "Создать"
             )
           );
           M.context = { type: "group" };
@@ -4671,27 +4831,37 @@
         static confirm() {
           const checked = [
             ...document.querySelectorAll(".group-checkbox:checked"),
-          ].map(cb => parseFloat(cb.getAttribute("data-timer-id")));
+          ];
           if (!checked.length) {
             ModalController.setError(
-              "\u041e\u0442\u043c\u0435\u0442\u044c\u0442\u0435 \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u0438\u043d \u0442\u0430\u0439\u043c\u0435\u0440 \u0433\u0440\u0443\u043f\u043f\u044b"
+              "Отметьте группу (или хотя бы один таймер группы)"
             );
             return;
           }
+          // Папки имеют приоритет перед таймерами: если отмечена папка,
+          // задача создаётся в ней (ТЗ 5.3.1).
+          const ids = checked.map(cb =>
+            parseFloat(
+              cb.getAttribute("data-folder-id") ||
+                cb.getAttribute("data-timer-id")
+            )
+          );
           const name = (
             document.getElementById("groupTaskName").value || ""
           ).trim();
+          const folderInput = document.getElementById("groupTaskFolderName");
+          const folderName = folderInput ? (folderInput.value || "").trim() : "";
           const share = Utils.parseShareInput(
             document.getElementById("groupTaskProportion").value
           );
           if (!Number.isFinite(share) || share < 0 || share >= 1) {
             ModalController.setError(
-              "\u0414\u043e\u043b\u044f \u0434\u043e\u043b\u0436\u043d\u0430 \u0431\u044b\u0442\u044c \u0447\u0438\u0441\u043b\u043e\u043c \u043e\u0442 0 \u0434\u043e 1"
+              "Доля должна быть числом от 0 до 1"
             );
             return;
           }
           ModalController.close();
-          AppController.createTaskInGroup(checked, name, share);
+          AppController.createTaskInGroup(ids, name, share, folderName);
         }
       }
       class SplitController {
@@ -4734,6 +4904,26 @@
               "div",
               { class: "modal-title" },
               `\u0420\u0430\u0437\u0431\u0438\u0442\u044c \u00ab${parentName}\u00bb \u043d\u0430 \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0438`
+            )
+          );
+          const folderRow = M.el("div", { class: "modal-row" });
+          folderRow.appendChild(
+            M.el("label", { for: "splitFolderName" }, "Название группы:")
+          );
+          folderRow.appendChild(
+            M.el("input", {
+              type: "text",
+              id: "splitFolderName",
+              value: parentName,
+              placeholder: "Название группы",
+            })
+          );
+          box.appendChild(folderRow);
+          box.appendChild(
+            M.el(
+              "div",
+              { class: "modal-hint" },
+              "Подзадачи будут сложены в группу (папку) на месте исходной задачи (ТЗ 5.2)."
             )
           );
           const rows = M.el("div", { id: "splitRows" });
@@ -4806,8 +4996,10 @@
             );
             return;
           }
+          const folderInput = document.getElementById("splitFolderName");
+          const folderName = folderInput ? (folderInput.value || "").trim() : "";
           ModalController.close();
-          AppController.splitTimer(ctx.timerId, specs);
+          AppController.splitTimer(ctx.timerId, specs, folderName);
         }
       }
       class UIFactory {
@@ -4966,6 +5158,10 @@
           "tzHolderDevice",
           "tzHolderZone",
           "tzHolderSkewMs",
+          // Дерево задач: папки, вложенность и ПОРЯДОК узлов. Порядок должен
+          // быть идентичен на всех устройствах (ТЗ 10.1), поэтому ключ
+          // синхронизируется целиком и участвует в сравнении снимков.
+          "tree",
         ];
         static ABANDON_MS = 150000;
         static clockSkewMs = 0;
@@ -5135,6 +5331,10 @@
             .join("|");
           return [
             timers,
+            // Дерево БЕЗ сортировки: перестановка узлов осмысленна и обязана
+            // разъезжаться по устройствам (ТЗ 10.1). Таймеры выше сортируются,
+            // поэтому раньше порядок в проекцию не попадал.
+            (snapshot && snapshot.tree) || "",
             (snapshot && snapshot.globalEndTimeValue) || "",
             (snapshot && snapshot.lastSessionEndTime) || "",
             (snapshot && snapshot.controlSeq) || "0",

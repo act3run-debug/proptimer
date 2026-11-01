@@ -91,7 +91,10 @@ test("день из жизни: планирование, отсчёт, прос
   const [code, calls] = children;
   assert.ok(Math.abs(code.trackedSeconds - (2 / 3) * HOUR) < 1e-6, `факт «Код» ${code.trackedSeconds}`);
   assert.ok(Math.abs(calls.trackedSeconds - (1 / 3) * HOUR) < 1e-6, `факт «Созвоны» ${calls.trackedSeconds}`);
-  assert.equal(code.splitId, calls.splitId);
+  // ТЗ 5.2: подзадачи разбиения лежат в одной папке (splitId убран, ТЗ 4.4)
+  const splitFolder = ctx.TreeModel.parentOf(code.id);
+  assert.ok(splitFolder && ctx.TreeModel.isFolder(splitFolder), "есть папка разбиения");
+  assert.equal(splitFolder, ctx.TreeModel.parentOf(calls.id));
 
   // --- 5. Снова работа: отсчёт подзадачи --------------------------------
   ctx.click(ctx.cardButton(code, "Старт"));
@@ -248,8 +251,8 @@ test("облачная конфигурация и версия приложен
   const ctx = setup();
   assert.match(
     ctx.APP_VERSION,
-    /^\d{4}-\d{2}-\d{2}-compact$/,
-    "метка версии отражает компактный режим карточек по умолчанию"
+    /^\d{4}-\d{2}-\d{2}-(compact|groups)$/,
+    "метка версии: компактный режим карточек, затем — группы (папки)"
   );
   assert.match(ctx.CLOUD_CONFIG.url, /^https:\/\/.+\.supabase\.co$/);
   assert.ok(ctx.CLOUD_CONFIG.anonKey.startsWith("sb_publishable_"));

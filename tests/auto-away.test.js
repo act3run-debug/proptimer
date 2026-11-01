@@ -520,11 +520,15 @@ test("добавление задачи в простое пересчитыва
   assert.equal(ctx.isAway(), true, "простой продолжается");
   assert.ok(ctx.card(created), "карточка новой задачи появилась в DOM");
   assert.ok(Math.abs(ctx.totalPlanned() - ctx.TimeCalculator.getTotalTime()) < 1e-6);
-  // Существующая механика (не связана с «Отошёл»): у новой задачи
-  // recommendedProportion = 0, а autoUpdate применяет рекомендации к весам,
-  // поэтому её план нулевой, пока пользователь не задаст цель/вес вручную.
-  assert.equal(created.recommendedProportion, 0);
-  assert.equal(created.plannedSeconds, 0);
+  // ТЗ 5.4: «+ Добавить таймер» создаёт задачу В КОРНЕ с указанной долей,
+  // ужимая только корневых сиблингов (общая сумма сохраняется).
+  // Строковая доля ("1/3") теперь разбирается так же, как в модалке
+  // (Utils.parseShareInput): раньше Number("1/3") давал NaN → доля 0,
+  // поэтому у новой задачи не было ни цели, ни плана.
+  assert.ok(Math.abs(created.targetProportion - 1 / 3) < 1e-9, `цель ${created.targetProportion}`);
+  assert.ok(Math.abs(ctx.sumTargets() - 1) < 1e-9, `сумма целей ${ctx.sumTargets()}`);
+  assert.ok(created.recommendedProportion > 0, "рекомендация появилась вместе с целью");
+  assert.ok(created.plannedSeconds > 0, "план новой задачи ненулевой");
   ctx.close();
 });
 
@@ -581,7 +585,10 @@ test("«Разбить задачу» в простое делит истори�
   const [c1, c2] = children;
   assert.ok(Math.abs(c1.trackedSeconds - 100) < 1e-6, `факт A1 = ${c1.trackedSeconds}`);
   assert.ok(Math.abs(c2.trackedSeconds - 200) < 1e-6, `факт A2 = ${c2.trackedSeconds}`);
-  assert.equal(c1.splitId, c2.splitId, "подзадачи связаны общим разбиением");
+  // ТЗ 5.2: подзадачи связаны общей папкой (splitId из модели убран, ТЗ 4.4)
+  const folder = ctx.TreeModel.parentOf(c1.id);
+  assert.ok(folder && ctx.TreeModel.isFolder(folder), "подзадачи в папке");
+  assert.equal(folder, ctx.TreeModel.parentOf(c2.id), "папка одна на обеих");
   ctx.close();
 });
 

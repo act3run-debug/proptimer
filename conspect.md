@@ -691,3 +691,48 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
   карточке) с комментариями «изменено по ТЗ 4.4/3.4.4».
 - 193+: новый tests/groups.test.js — доли/цели/папки/перенос/перемещения/удаление/порядок+sync (много, вкл. регрессионные).
 - далее: A/B против /tmp/index.before-groups.html, live-preview, conspect каждые 10 действий, commit+push после ответа.
+
+## 46. Журнал задачи 4 (действия 188–200): реализация завершена, 135/135 зелёные
+- 188: conspect (этот файл) — журнал 162–187, состояние, намерение; commit/push 23ea32a.
+- 189: patch5.py — splitTimer: папка на месте таймера (имя из модалки, по умолчанию имя таймера), убраны
+  splitShare/splitId/splitParentName (+ delete в санитайзере потомков); createControlButtons/createButtonElements/
+  createToGroupButton — кнопка «В группу» внизу карточки; CSS: `button:not([data-action="track"]):not([data-action="to-group"])`
+  (префикс старого правила сохранён → тест на CSS-подстроку проходит); модалка разбиения: поле «Название группы»
+  (#splitFolderName) + confirm передаёт имя. Файл 269 199 Б, синтаксис OK.
+- 190: patch6.py — GroupTaskController переписан: если папки есть → список папок (.group-checkbox.group-folder,
+  data-folder-id), иначе → таймеры (.group-checkbox.group-timer, data-timer-id) + поле «Название новой группы»;
+  confirm: папки в приоритете, ошибка «Отметьте группу (или хотя бы один таймер группы)»; ModalController:
+  create-group-confirm / move-confirm; StorageService: save/load ключа "tree" (+ ensureTimerNodes), parseTreeJSON,
+  parseTimersJSON принимает массив, sanitizeTimerEntry удаляет legacy-поля разбиения, экспорт = формат v2
+  {version, appVersion, exportedAt, tree, timers}, импорт понимает v2 и прежний массив; CloudSync: STATE_KEYS += "tree",
+  meaningfulProjection += snapshot.tree БЕЗ сортировки (порядок стал осмысленным изменением); AppController.init
+  строит дерево. Файл 274 266 Б, синтаксис OK.
+- 191–193: tests/harness.js — collectGlobals += CreateGroupController, FolderView, MoveToGroupController, TreeController,
+  TreeModel, TreeMoveView (33 имени); ctx.reset() чистит AppState.tree + FolderView.collapsedFolders +
+  TimerView.expandedTimers; новые хелперы: cardById, folderEl, folderChildrenEl, addFolder, moveToFolder, flat(),
+  rootOrder(), shareInput, shareRow, shareValue, moveButton(node,dir), sumTargets().
+- 194: npm test → 128/135, 7 падений: #30 auto-away (доля "1/3"), #52 compact (8 строк вместо 7), #71 compact
+  («Доля» разбиения), #75/#84 (регулярка версии -compact), #95/#96 regression (splitShare/splitId).
+- 195–196: разбор #30: `createTaskInGroup` в СТАРОМ коде делал `Number("1/3")` → NaN → p = 0, поэтому у новой задачи
+  не было ни цели, ни плана; новый `createTaskInLevel` разбирает строковую долю через Utils.parseShareInput
+  (как модалка) → цель 1/3 появилась. Это исправление латентного бага, UI-путь не меняется (модалки всегда
+  передают число).
+- 197: разбор #52: id `share-row-<id>` стоял на ВНУТРЕННЕМ блоке, а строка карточки (.share-container) оставалась
+  видимой → 8 строк.
+- 198: patch8.py — id строки перенесён на контейнер строки (прямой ребёнок карточки): updateTimerShare теперь
+  реально скрывает строку в корне. Тест #52 снова зелёный.
+- 199: чтение теста «в развёрнутой карточке видно всё» (он сравнивал число видимых строк с числом детей).
+- 200: patch9.py — правка 5 существующих тестов под новое поведение (со ссылками на пункты ТЗ): regression
+  (доли из дерева + папка вместо splitShare/splitId/splitParentName), auto-away (папка вместо splitId; доля "1/3"
+  разбирается → цель 1/3, сумма 1, план ненулевой), integration (папка вместо splitId; регулярка версии
+  (compact|groups)), compact-mode (регулярка версии; развёрнутая карточка учитывает скрытую в корне «Долю»;
+  тест про долю переписан: видна и в свёрнутой — ТЗ 3.4.4; «В группу» видна в свёрнутой — ТЗ 6.1).
+  **npm test → 135/135 pass, 0 fail (~27 с).**
+
+## 47. Намерение (действия 202+)
+- 202–204: новый tests/groups.test.js — папки/доли/цели/операции/удаление/отображение дерева (ТЗ 2,3,4,5,6,7,8).
+- 205–206: новый tests/groups-move.test.js — перемещения стрелками (ТЗ 9) и синхронизация порядка (ТЗ 10) + регрессии хранилища.
+- 207: полный npm test; разбор падений (свои тесты могут вскрыть баги реализации — чинить реализацию).
+- 208: A/B — прогон НОВЫХ тестов против /tmp/index.before-groups.html (должны падать: тесты не тривиальны)
+  и регрессионных против него же (не должны).
+- 209: tests/README.md — состав набора, цифры; conspect (каждые 10 действий); live-preview; commit+push.
