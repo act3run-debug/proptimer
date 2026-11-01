@@ -480,7 +480,10 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
 - 157: `npm install` + `npm test` → **135/135 pass, 0 fail, ~22,3 с** (подтверждение заявленного в conspect).
 - 158: этот блок conspect.md (заменён черновик сессии на актуальный файл из репо + дописана история, чужое не переписано).
 - 159: ответ пользователю (что делает код).
-- 160: commit + push.
+- 160: git-политика: разовая настройка (user act3run-debug, credential.helper store, токен ТОЛЬКО в
+  `~/.git-credentials`, chmod 600, вне снапшота). `git pull --rebase` отработал с ошибкой «unstaged changes»
+  (conspect.md был уже изменён) → вместо него commit + push: **13cc973..dc64570 main → main, УСПЕШНО**.
+  Конфликтов нет (remote за сессию не двигался).
 
 ## 35. Находки среды (сессия 3)
 - Рабочий каталог bash — workspace (`/tmp/arena/tenants/…/sessions/…/workspace`), НЕ `/home/user`;
