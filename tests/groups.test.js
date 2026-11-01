@@ -351,6 +351,29 @@ test("ТЗ 3.5.3: доля задаётся числом от 0 до 1 (гран
   ctx.close();
 });
 
+test("ТЗ 3.5.6: на корневом уровне правка доли и правка цели неразличимы", () => {
+  // Доля корневой сущности численно равна её цели (ТЗ 3.3.4), поэтому радиусы
+  // обеих правок совпадают и результат обязан быть одинаковым.
+  const one = scene();
+  const two = scene();
+  const A1 = one.ctx.AppState.getTimers().find(t => t.name === "A");
+  const A2 = two.ctx.AppState.getTimers().find(t => t.name === "A");
+
+  T(one.ctx).setShareLocal(A1.id, 0.25); // правка «доли»
+  T(two.ctx).setTargetGlobal(A2.id, 0.25); // правка «цели»
+
+  ["A", "B", "C"].forEach(name => {
+    const t1 = one.ctx.AppState.getTimers().find(t => t.name === name);
+    const t2 = two.ctx.AppState.getTimers().find(t => t.name === name);
+    close(target(t1), target(t2), `цель ${name} совпадает при обеих правках`);
+  });
+  close(target(A1), 0.25, "новое значение принято");
+  close(one.ctx.sumTargets(), 1, "сумма 1 (доля)");
+  close(two.ctx.sumTargets(), 1, "сумма 1 (цель)");
+  one.ctx.close();
+  two.ctx.close();
+});
+
 test("ТЗ 3.6: правка доли локальна — сумма родителя не меняется, снаружи всё прежнее", () => {
   const { ctx, a, b, c } = folderScene();
   const beforeA = target(a);
@@ -711,6 +734,33 @@ test("ТЗ 5.3.2: если папок нет, выбираются таймер�
   assert.ok(folder && T(ctx).isFolder(folder), "новая задача внутри папки");
   assert.equal(folder.name, "Новая группа");
   assert.equal(folder.children.length, 3, "A, B и новая задача");
+  ctx.close();
+});
+
+test("ТЗ 5.3.3: раздел создания таймера внутри операции сохранён, доля принимает обычную дробь", () => {
+  const { ctx, document } = folderScene();
+  ctx.GroupTaskController.openModal();
+  // поля создания задачи на месте (имя и доля)
+  const name = document.getElementById("groupTaskName");
+  const proportion = document.getElementById("groupTaskProportion");
+  assert.ok(name, "поле названия задачи");
+  assert.ok(proportion, "поле доли");
+  assert.ok(
+    document.querySelectorAll(".group-checkbox[data-folder-id]").length > 0,
+    "список групп-папок"
+  );
+  // доля вводится обычной дробью, как в остальных модалках
+  [...document.querySelectorAll(".group-checkbox[data-folder-id]")].forEach(cb => {
+    cb.checked = true;
+  });
+  name.value = "D";
+  proportion.value = "1/4";
+  modalClick(ctx, "groupTaskConfirm");
+  const created = ctx.AppState.getTimers().find(t => t.name === "D");
+  assert.ok(created, "задача создана");
+  close(T(ctx).shareOf(created.id), 0.25, "доля 1/4 разобрана как 0.25");
+  close(T(ctx).folderTarget(ctx.f.id), 0.5, "сумма папки не изменилась (ТЗ 5.3.4)");
+  close(ctx.sumTargets(), 1, "сумма приложения 1");
   ctx.close();
 });
 
@@ -1203,6 +1253,29 @@ test("регрессия: экспорт содержит дерево, импо
   const asArray = ctx.StorageService.parseTimersJSON(legacy);
   assert.equal(asArray.length, 3, "parseTimersJSON принимает и массив");
   assert.equal(ctx.StorageService.parseTreeJSON("{мусор").length, 0, "битое дерево → пусто");
+  ctx.close();
+});
+
+test("ТЗ 1.4: вес остаётся производной величиной и пересчитывается сам", () => {
+  const { ctx, b } = folderScene();
+  const sumWeights = () =>
+    ctx.AppState.getTimers().reduce((s, t) => s + (Number(t.proportion) || 0), 0);
+  close(sumWeights(), 1, "сумма весов = 1");
+  // у папки собственного веса нет: она не таймер
+  const folderNode = T(ctx).findNode(ctx.f.id).node;
+  assert.equal(folderNode.proportion, undefined, "у узла папки нет веса");
+  assert.equal(
+    ctx.AppState.getTimers().some(t => t.id === ctx.f.id),
+    false,
+    "папки нет в списке таймеров"
+  );
+  // правим цель внутри папки — вес подстраивается сам, сумма остаётся 1
+  T(ctx).setTargetGlobal(b.id, 0.4);
+  ctx.tick();
+  close(sumWeights(), 1, "после правки цели сумма весов по-прежнему 1");
+  ctx.AppState.getTimers().forEach(t => {
+    assert.ok(t.proportion >= 0, `вес ${t.name} неотрицателен`);
+  });
   ctx.close();
 });
 
