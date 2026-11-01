@@ -425,3 +425,75 @@ Supabase (ключ-фраза → SHA-256 = адрес записи), NTP-под
   облачного состояния) — оно намеренно не сериализуется. Если понадобится «запоминать» — хранить
   отдельным ключом localStorage (НЕ в объекте таймера, чтобы не менять meaningfulProjection).
 - Базовая версия для A/B компактного режима: `git show a3188dc:index.html`.
+
+---
+
+# СЕССИЯ 3 — снова «что делает этот код?» (агент №3, 2026-11-01)
+
+## 32. Задача сессии 3
+Пользователь прислал `uploads/conspect md instructions.md` (8016 байт — та же инструкция: правила conspect.md
++ git-политика) и ссылку `https://github.com/act3run-debug/proptimer/index.html` + push-токен в чате.
+Вопрос: «Скажи, что делает этот код?». Изменений кода не запрошено. `context.md` в сессию НЕ передан
+(правила из него, включая «правило 6», недоступны — действовал по аналогии с сессией 2: чужой conspect
+прочитан, ключевое перепроверено живьём, история не переписана).
+
+## 33. Текущая конфигурация (перепроверено ЖИВЬЁМ, 2026-11-01)
+- HEAD = **13cc973** (main, 14 коммитов, полный клон после `git fetch --unshallow`).
+- `index.html`: **229 460 байт, 4896 строк** (CRLF), sha256 = `15e967d7a4331518…` — совпадает с финалом задачи 3.
+- `APP_VERSION = "2026-10-31-compact"` (подтверждено grep'ом, строка 293).
+- Кнопки «Отошёл» нет: 0 вхождений `awayButton`/`toggle-away` (подтверждено) — авто-away (`TimeManager.syncAutoAway`) на месте.
+- Состав репо (в отличие от сессии 1): `index.html`, `conspect.md` (55 577 Б, 427 строк), `package.json`,
+  `package-lock.json`, `.gitignore`, `tests/` (README.md, harness.js, auto-away 46, regression 51,
+  integration 8, compact-mode 30 = 135 тестов). `DEPLOY.md` и `supabase_setup.sql` по-прежнему ОТСУТСТВУЮТ.
+- Карта классов (строки текущей версии): NotificationService 299, EventService 320, SessionManager 440,
+  AppController 507, StorageService 933, TimerController 1315, TimerModel 1616, Timer 1807,
+  ProportionCalculator 1813, TimeCalculator 1985, PriorityCalculator 2055, CalculationService 2073,
+  TimerView 2217, TimeManager 2817, MenuController 3006, ModalController 3017, AddTaskController 3100,
+  GroupTaskController 3167, SplitController 3272, UIFactory 3388, Utils 3426, CloudSync 3499,
+  TimeZoneHolder 4405, CloudController 4622.
+- CLOUD_CONFIG: Supabase `iqvqjiwjizlzronudgui.supabase.co`, publishable key зашит в публичном файле,
+  syncIntervalMs = 20000; STATE_KEYS — 11 ключей localStorage; ABANDON_MS = 150000; CHECKPOINT_MS = 60000.
+- Тик: `setInterval(CalculationService.updateCalculations, 200)` + автосохранение в LS раз в 60 с.
+- Токен GitHub: **выдан пользователем в чате в этой сессии**, значение в файлы не записано
+  (только `~/.git-credentials`, вне снапшота). ЗАСВЕЧЕН В ЧАТЕ → рекомендовал отозвать.
+
+## 34. Журнал сессии 3 (нумерация продолжается: 144–160)
+- 144: прочитан uploads-файл инструкции; разведка ФС — cwd = `…/sessions/14feaf3d-…/workspace`,
+  `/home/user` ОТСУТСТВОВАЛ (создал вручную, но файлы инструментов живут в workspace).
+- 145: `curl` в песочнице нет (git/python3 есть) → сеть только через fetch_page.
+- 146: fetch_page raw `index.html` chunk 0/26 — шапка HTML+CSS (тёмная тема, globalControls, модалка, меню).
+- 147: создан черновой conspect.md этой сессии (до обращения к «API»).
+- 148: fetch_page chunks 1–5 — начало inline-JS: APP_VERSION, CLOUD_CONFIG, NotificationService,
+  EventService, SessionManager, AppController (createTaskInGroup/splitTimer/autoUpdate), AppState,
+  StorageService (sanitize/parseTimersJSON, фиксы БАГ #8/#9/#10).
+- 149: `git clone --depth 1` → workspace/repo; сеть для git работает.
+- 150: инвентаризация: в репо ЕСТЬ conspect.md прежних агентов (задачи 1–3) + package.json + tests/ (135 тестов).
+- 151: прочитаны разделы 1–9 чужого conspect.md (итоговая сводка «что делает код» — опора для ответа).
+- 152: перечитаны ключевые места кода живьём: ProportionCalculator, TimeCalculator, PriorityCalculator (1807–2080).
+- 153: CalculationService.updateCalculations/updateActiveTimers/updateTimerPlans (2080–2220): тик 200 мс,
+  delta, БАГ #6, зеркалируемый трекинг, уведомление о завершении, защита 0/0 → NaN.
+- 154: TimeManager (2817–3010): ролловер «Конца», updateGlobalEndTimeAndPlans, авто-away
+  (syncAutoAway/armAway/deactivateAway/handleAwayMode, БАГ #5), handleAutoAwayMode (уменьшение планов закомментировано).
+- 155: CloudSync-заголовок + STATE_KEYS (3485–3560), TimeZoneHolder (4396–4470), список data-action
+  (add-timer, cloud, create-in-group, export, import, menu, save, toggle-compact, track, tz-holder).
+- 156: `git fetch --unshallow` → полная история: 14 коммитов (bad5b63 «Add files via upload» → 13cc973).
+- 157: `npm install` + `npm test` → **135/135 pass, 0 fail, ~22,3 с** (подтверждение заявленного в conspect).
+- 158: этот блок conspect.md (заменён черновик сессии на актуальный файл из репо + дописана история, чужое не переписано).
+- 159: ответ пользователю (что делает код).
+- 160: commit + push.
+
+## 35. Находки среды (сессия 3)
+- Рабочий каталог bash — workspace (`/tmp/arena/tenants/…/sessions/…/workspace`), НЕ `/home/user`;
+  относительные пути инструментов резолвятся туда же. Файлы, записанные в `/home/user`, в снапшот не попадают.
+- `curl`/`wget` отсутствуют; `git clone` по https работает без токена (репо публичное).
+- Неглубокий клон (`--depth 1`) обрезает историю → для отчёта нужен `git fetch --unshallow`.
+- `npm install`/`node_modules` НЕ переживают сессию (как и раньше): после восстановления окружения тесты
+  запускаются только после повторного `npm install` (Node в песочнице есть, `node --test`).
+- В workspace-корне заведён `.gitignore` с `repo/` — чтобы вложенный клон не попал в коммит как gitlink.
+
+## 36. Итог сессии 3
+- Код НЕ менялся. Ответ: однофайловое SPA «Пропорциональный таймер» (UI-заголовок «physus»),
+  планировщик суток/сессии с весами, рекомендациями и приоритетами + мультиустройственная
+  синхронизация через Supabase; текущая версия `2026-10-31-compact` (карточки свёрнуты по умолчанию,
+  away-режим автоматический).
+- Состояние проверено живьём: 135/135 тестов зелёные, sha256 index.html совпадает с финалом задачи 3.
