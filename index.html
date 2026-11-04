@@ -4,147 +4,133 @@
     <meta charset="utf-8" />
     <title>Пропорциональный таймер</title>
     <style>
+      /* =================================================================
+         Оформление. Тёмно-синяя тема, моноширинный шрифт, скруглённые
+         углы, компактные карточки. Палитра: фон #0a1530, карточки #14275a,
+         акцент #6aa7ff, «хорошо» #5fd4a0, «просрочено» #ff7b8a, внимание #f2b84b.
+         ================================================================= */
       html,
       body {
         height: 100%;
         min-height: 100%;
       }
       body {
-        background-color: #000000;
-        color: #e0e0e0;
+        background-color: #0a1530;
+        background-image: radial-gradient(
+          ellipse at 50% -10%,
+          #1c3672 0%,
+          rgba(10, 21, 48, 0) 62%
+        );
+        background-attachment: fixed;
+        color: #dbe5ff;
         margin: 0;
         padding: 0;
-        font-family: Consolas, monospace;
-      }
-      .timer-container {
-        border: 1px solid #ffffff;
-        padding: 15px;
-        margin: 10px;
-        border-radius: 5px;
-        background-color: #000000;
-        flex: 0 1 auto;
-        min-width: 300px;
-        max-width: 450px;
-      }
-      .timer-controls {
-        margin: 10px 0;
+        font-family: "JetBrains Mono", "Cascadia Mono", "SF Mono", ui-monospace,
+          Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 13px;
+        line-height: 1.4;
       }
       input[type="number"],
       input[type="text"],
-      input[type="time"] {
+      input[type="time"],
+      input[type="password"] {
         width: 60px;
-        background-color: #000000;
-        color: #e0e0e0;
-        border: 1px solid #444;
-        padding: 5px;
+        height: 28px;
+        box-sizing: border-box;
+        background-color: #0b1736;
+        color: #dbe5ff;
+        border: 1px solid #2a447f;
+        border-radius: 7px;
+        padding: 3px 8px;
+        font-family: inherit;
+        font-size: 12px;
       }
-      .time-display {
-        font-size: 1.2em;
-        margin: 5px 0;
+      input:focus {
+        outline: none;
+        border-color: #6aa7ff;
+        box-shadow: 0 0 0 2px rgba(106, 167, 255, 0.25);
       }
       button {
-        margin: 0 5px;
-        padding: 5px 10px;
-        background-color: #000000;
-        color: #e0e0e0;
-        border: 1px solid #444;
+        margin: 0;
+        padding: 4px 11px;
+        background-color: #17306a;
+        color: #dbe5ff;
+        border: 1px solid #2b4a92;
+        border-radius: 8px;
+        font-family: inherit;
+        font-size: 12px;
+        line-height: 1.3;
         cursor: pointer;
+        transition: background-color 0.15s, border-color 0.15s;
       }
       button:hover {
-        background-color: #222222;
+        background-color: #1f3d85;
+        border-color: #4668b5;
       }
-      #globalEndTime {
-        margin: 10px;
-        padding: 5px;
+      button:active {
+        transform: translateY(1px);
       }
-      /* Оформление убранной кнопки «Отошёл» больше не нужно: away-режим
-         включается сам (TimeManager.syncAutoAway), кнопки в панели нет. */
+      button[data-action="delete"]:hover,
+      button[data-action="delete-folder"]:hover {
+        background-color: #5a2233;
+        border-color: #ff7b8a;
+      }
+      .time-display {
+        margin: 0;
+      }
+
+      /* --- Верхняя панель ------------------------------------------- */
       #globalControls {
-        position: fixed;
+        position: sticky;
         top: 0;
-        left: 0;
         width: 100%;
-        background-color: #000000;
-        padding: 10px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+        box-sizing: border-box;
+        background-color: rgba(10, 21, 48, 0.92);
+        border-bottom: 1px solid #1f3369;
+        padding: 8px 14px;
+        box-shadow: 0 4px 14px rgba(2, 8, 28, 0.45);
         z-index: 1000;
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
+        gap: 6px 10px;
       }
-      /* Дерево задач: сущности идут в ряд ВЕРТИКАЛЬНО (ТЗ 8.1), а уровень
-         вложенности задаётся отступом слева у .folder-children (ТЗ 8.2). */
-      #timersContainer {
-        margin-top: 60px;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
+      #globalControls label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #8ea3d4;
+        font-size: 12px;
+      }
+      #globalEndTime {
+        margin: 0;
       }
       #appTitle {
-        color: #4caf50;
-        font-size: 22px;
+        color: #6aa7ff;
+        font-size: 16px;
         font-weight: bold;
-        margin-right: 15px;
-      }
-      /* Фикс (интерфейс): единый стиль подписей полей — подпись всегда
-         рядом со своим полем, выровнены в колонку */
-      .field-label {
-        display: inline-block;
-        min-width: 170px;
-        color: #4caf50;
+        letter-spacing: 0.5px;
         margin-right: 6px;
       }
-      .name-input-container input[type="text"] {
-        width: 200px;
+      #scheduleStartLabel {
+        white-space: nowrap;
       }
-      .name-input-container,
-      .proportion-container,
-      .target-container,
-      .tracked-inputs-container,
-      .total-inputs-container,
-      .recommendation-display-container,
-      .priority-display-container,
-      .actual-proportion-container,
-      .buttons-container {
-        margin: 6px 0;
+      #scheduleStart,
+      #globalEndTime {
+        width: 92px;
       }
-      /* Компактный режим: по умолчанию карточка СВЁРНУТА — видны только
-         Название, Целевая пропорция, Факт, Осталось, Приоритет и кнопка
-         Старт/Пауза. Строки, которым разрешено оставаться видимыми, помечены
-         классом compact-visible (см. TimerView.appendTimerElements); сама
-         стрелка живёт в compact-toggle-container и видна всегда.
-         Элементы НЕ удаляются из DOM: в них продолжают писать
-         updateDisplay/updateTimer*, поэтому расчёты и облачная синхронизация
-         сворачивания «не замечают». */
-      .compact-toggle-container {
-        margin: 0 0 6px 0;
-      }
-      .compact-toggle {
-        margin: 0;
-        padding: 1px 8px;
-        font-size: 12px;
-        line-height: 1.2;
-      }
-      .timer-container.collapsed {
-        padding: 8px 15px;
-      }
-      .timer-container.collapsed > *:not(.compact-visible) {
-        display: none;
-      }
-      /* «В группу» (ТЗ 6.1) остаётся доступной и в свёрнутой карточке */
-      .timer-container.collapsed .buttons-container button:not([data-action="track"]):not([data-action="to-group"]) {
-        display: none;
-      }
-      /* Операции: кнопка меню справа, выпадающее меню, модальные окна,
-         подсветка сиблингов разбиения */
       #menuButton {
         margin-left: auto;
       }
       #operationsMenu {
         position: absolute;
         top: 100%;
-        right: 10px;
-        background-color: #000000;
-        border: 1px solid #444;
+        right: 14px;
+        background-color: #0f1e45;
+        border: 1px solid #2b4a92;
+        border-radius: 10px;
+        padding: 4px;
+        box-shadow: 0 10px 28px rgba(2, 8, 28, 0.6);
         display: none;
         flex-direction: column;
         z-index: 1200;
@@ -153,17 +139,476 @@
         display: flex;
       }
       #operationsMenu button {
-        margin: 4px;
+        margin: 2px;
         text-align: left;
         white-space: nowrap;
+        background-color: transparent;
+        border-color: transparent;
       }
+      #operationsMenu button:hover {
+        background-color: #1f3d85;
+      }
+      #tzHolderButton {
+        white-space: nowrap;
+      }
+      #tzHolderButton.tz-holder {
+        border-color: #5fd4a0;
+        color: #5fd4a0;
+      }
+      #tzHolderButton.tz-follower {
+        border-color: #ff7b8a;
+        color: #ff7b8a;
+      }
+      #tzHint {
+        color: #8ea3d4;
+        font-size: 11px;
+        margin-left: 4px;
+        white-space: nowrap;
+      }
+      #cloudButton.has-error {
+        border-color: #ff7b8a;
+        color: #ff7b8a;
+      }
+      #cloudButton.synced {
+        border-color: #5fd4a0;
+      }
+
+      /* --- Дерево задач ----------------------------------------------
+         Сущности идут в ряд ВЕРТИКАЛЬНО (ТЗ 8.1) и по центру экрана;
+         вложенность — отступом слева у .folder-children (ТЗ 8.2). */
+      #timersContainer {
+        margin: 0 auto;
+        padding: 14px 12px 48px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      #timersContainer > .timer-container,
+      #timersContainer > .folder-node {
+        width: 100%;
+        max-width: 440px;
+      }
+
+      /* --- Карточка таймера ------------------------------------------
+         Сетка 4 колонок. В свёрнутом виде три строки:
+         [стрелки | название | приоритет]
+         [цель                    | доля]
+         [Факт / Осталось         | кнопки]
+         Подписи полей скрыты там, где достаточно подсказки в поле. */
+      .timer-container {
+        display: grid;
+        grid-template-columns: auto auto minmax(0, 1fr) auto;
+        column-gap: 8px;
+        row-gap: 6px;
+        align-items: center;
+        box-sizing: border-box;
+        min-width: 0;
+        margin: 5px 0;
+        padding: 10px 12px;
+        background-color: #12234d;
+        background-image: linear-gradient(180deg, #162b61 0%, #112247 100%);
+        border: 1px solid #243d7a;
+        border-radius: 12px;
+        box-shadow: 0 6px 18px rgba(2, 8, 28, 0.4);
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .timer-container[data-tracking="true"] {
+        border-color: #4fbf93;
+        box-shadow: 0 0 0 1px rgba(79, 191, 147, 0.4),
+          0 8px 24px rgba(10, 70, 55, 0.4);
+      }
+      .timer-container > * {
+        grid-column: 1 / -1;
+        min-width: 0;
+        margin: 0;
+      }
+      .timer-container > .compact-toggle-container {
+        grid-column: 1;
+        grid-row: 1;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .timer-container > .name-input-container {
+        grid-column: 2 / 4;
+        grid-row: 1;
+      }
+      .timer-container > .priority-display-container {
+        grid-column: 4;
+        grid-row: 1;
+      }
+      .timer-container > .target-container {
+        grid-column: 1 / 3;
+        grid-row: 2;
+      }
+      .timer-container > .share-container {
+        grid-column: 3 / 5;
+        grid-row: 2;
+        justify-self: end;
+      }
+      .timer-container > .tracked-display-container {
+        grid-column: 1;
+        grid-row: 3;
+      }
+      .timer-container > .remaining-display-container {
+        grid-column: 2 / 4;
+        grid-row: 3;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .timer-container > .remaining-display-container::before {
+        content: "/";
+        color: #4b64a3;
+        font-size: 18px;
+      }
+      .timer-container > .buttons-container {
+        grid-column: 4;
+        grid-row: 3;
+        justify-self: end;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+      /* Развернутая карточка: кнопки и подробности идут отдельными строками */
+      .timer-container:not(.collapsed) > .buttons-container {
+        grid-column: 1 / -1;
+        grid-row: auto;
+        justify-self: stretch;
+        justify-content: flex-start;
+        border-top: 1px solid #243d7a;
+        padding-top: 8px;
+      }
+      .timer-container:not(.collapsed) > .proportion-container {
+        border-top: 1px solid #243d7a;
+        padding-top: 8px;
+      }
+      .timer-container:not(.collapsed) > .remaining-display-container::before {
+        display: none;
+      }
+      .name-input-container .field-label {
+        display: none;
+      }
+      .name-input-container input[type="text"] {
+        width: 100%;
+        font-size: 13px;
+        font-weight: 600;
+        background-color: transparent;
+        border-color: transparent;
+        padding-left: 4px;
+      }
+      .name-input-container input[type="text"]:hover {
+        border-color: #2a447f;
+      }
+      .name-input-container input[type="text"]:focus {
+        background-color: #0b1736;
+      }
+      .field-label {
+        display: inline-block;
+        min-width: 130px;
+        color: #8ea3d4;
+        font-size: 12px;
+        margin-right: 6px;
+      }
+      .target-container .field-label,
+      .share-container .field-label {
+        min-width: 0;
+        margin-right: 4px;
+      }
+      .target-container input[type="number"],
+      .share-container input[type="number"] {
+        width: 74px;
+      }
+      .proportion-container,
+      .target-container,
+      .tracked-inputs-container,
+      .total-inputs-container,
+      .recommendation-display-container,
+      .priority-display-container,
+      .actual-proportion-container {
+        margin: 0;
+      }
+      .tracked-inputs-container,
+      .total-inputs-container {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .tracked-inputs-container input[type="number"],
+      .total-inputs-container input[type="number"] {
+        width: 48px;
+      }
+      .recommendation-display,
+      .actual-proportion {
+        color: #8ea3d4;
+        font-size: 12px;
+      }
+
+      /* Время: подпись мелко сверху, значение крупнее, «Факт / Осталось» в ряд */
+      .time-display {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.15;
+      }
+      .time-display .lbl {
+        color: #8ea3d4;
+        font-size: 10px;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+      }
+      .time-display span:not(.lbl) {
+        font-size: 15px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.2px;
+      }
+      .planned-display-container .time-display,
+      .total-display-container .time-display {
+        flex-direction: row;
+        align-items: baseline;
+        gap: 10px;
+      }
+      .planned-display-container .time-display .lbl,
+      .total-display-container .time-display .lbl {
+        min-width: 56px;
+      }
+      .planned-display-container .time-display span:not(.lbl),
+      .total-display-container .time-display span:not(.lbl) {
+        font-size: 13px;
+      }
+      .time-ok {
+        color: #5fd4a0;
+      }
+      .time-over {
+        color: #ff7b8a;
+      }
+      .timer-container[data-tracking="true"] [id^="tracked-"] {
+        color: #6aa7ff;
+      }
+
+      /* Приоритет: «пилюля»; первый приоритет мягко мигает */
+      .timer-container > .priority-display-container {
+        justify-self: end;
+      }
+      .priority-display-container > div {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        background-color: #1b3167;
+        border: 1px solid #2d4b93;
+        color: #9fb3e3;
+        white-space: nowrap;
+      }
+      .priority-display-container > div.priority-top {
+        color: #ffe7b0;
+        background-color: #4a3a12;
+        border-color: #e0a93b;
+        animation: priority-blink 1.5s ease-in-out infinite;
+      }
+      @keyframes priority-blink {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 rgba(242, 184, 75, 0);
+          opacity: 1;
+        }
+        50% {
+          box-shadow: 0 0 0 4px rgba(242, 184, 75, 0.32);
+          opacity: 0.7;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .priority-display-container > div.priority-top {
+          animation: none;
+        }
+      }
+
+      /* Кнопка Старт/Пауза: текст остаётся прежним, значок — оформление */
+      button[data-action="track"] {
+        background-color: #1c5a49;
+        border-color: #2f8f73;
+        color: #d8fff0;
+        min-width: 74px;
+      }
+      button[data-action="track"]::before {
+        content: "\25B6\00a0";
+        font-size: 10px;
+      }
+      button[data-action="track"]:hover {
+        background-color: #247159;
+        border-color: #49b392;
+      }
+      .timer-container[data-tracking="true"] button[data-action="track"] {
+        background-color: #6b4f12;
+        border-color: #c9962f;
+        color: #ffe9b8;
+      }
+      .timer-container[data-tracking="true"] button[data-action="track"]::before {
+        content: "\23F8\00a0";
+      }
+
+      /* --- Компактный режим -----------------------------------------
+         По умолчанию карточка СВЁРНУТА — видны только Название, Целевая
+         пропорция, Доля, Факт, Осталось, Приоритет и кнопки Старт/Пауза и
+         «В группу». Строки, которым разрешено оставаться видимыми, помечены
+         классом compact-visible (см. TimerView.appendTimerElements); сама
+         стрелка живёт в compact-toggle-container и видна всегда.
+         Элементы НЕ удаляются из DOM: в них продолжают писать
+         updateDisplay/updateTimer*, поэтому расчёты и облачная синхронизация
+         сворачивания «не замечают». */
+      .compact-toggle-container {
+        margin: 0;
+      }
+      .compact-toggle,
+      .move-buttons .move-button {
+        margin: 0;
+        padding: 0;
+        width: 22px;
+        height: 22px;
+        font-size: 11px;
+        line-height: 1;
+        border-radius: 6px;
+        background-color: transparent;
+        border-color: #2b4a92;
+        color: #9fb3e3;
+      }
+      .compact-toggle:hover,
+      .move-buttons .move-button:hover {
+        color: #ffffff;
+      }
+      .timer-container.collapsed {
+        padding: 9px 12px;
+      }
+      .timer-container.collapsed > *:not(.compact-visible) {
+        display: none;
+      }
+      /* «В группу» (ТЗ 6.1) остаётся доступной и в свёрнутой карточке */
+      .timer-container.collapsed .buttons-container button:not([data-action="track"]):not([data-action="to-group"]) {
+        display: none;
+      }
+      button[data-action="to-group"] {
+        background-color: transparent;
+        color: #9fb3e3;
+      }
+
+      /* --- Группы (папки) -------------------------------------------- */
+      .folder-node {
+        box-sizing: border-box;
+        margin: 5px 0;
+        padding: 8px 10px;
+        background-color: rgba(255, 255, 255, 0.03);
+        border: 1px solid #2b4a92;
+        border-radius: 12px;
+        flex: 0 1 auto;
+        min-width: 0;
+      }
+      .folder-header {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+        align-items: center;
+        gap: 6px;
+      }
+      .folder-header > .move-buttons {
+        grid-column: 1;
+        grid-row: 1;
+      }
+      .folder-header > .folder-label {
+        display: none;
+      }
+      .folder-header > .folder-name {
+        grid-column: 2 / 5;
+        grid-row: 1;
+        width: auto;
+        min-width: 0;
+        font-weight: 600;
+      }
+      .folder-header > .folder-toggle {
+        grid-column: 5;
+        grid-row: 1;
+      }
+      .folder-header > .folder-target {
+        grid-column: 1 / 3;
+        grid-row: 2;
+      }
+      .folder-header > .folder-share {
+        grid-column: 3;
+        grid-row: 2;
+      }
+      .folder-header > button[data-action="to-group"] {
+        grid-column: 4;
+        grid-row: 2;
+      }
+      .folder-header > button[data-action="delete-folder"] {
+        grid-column: 5;
+        grid-row: 2;
+      }
+      .folder-label {
+        min-width: 0;
+        margin-right: 0;
+        color: #8ea3d4;
+      }
+      .folder-target,
+      .folder-share {
+        color: #8ea3d4;
+        font-size: 11px;
+        margin: 0 2px;
+        white-space: nowrap;
+      }
+      .folder-share,
+      .share-container .share-value {
+        color: #6aa7ff;
+        border: 1px solid #2b4a92;
+        border-radius: 999px;
+        padding: 1px 8px;
+        cursor: help;
+      }
+      .folder-action {
+        padding: 2px 9px;
+        background-color: transparent;
+        color: #9fb3e3;
+      }
+      /* Стрелка сворачивания группы — СПРАВА (ТЗ 8.3) */
+      .folder-toggle {
+        margin-left: auto;
+        padding: 1px 9px;
+      }
+      .folder-children {
+        margin-left: 14px;
+        padding-left: 8px;
+        border-left: 1px solid #243d7a;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .folder-children > .timer-container,
+      .folder-children > .folder-node {
+        max-width: none;
+        width: auto;
+      }
+      .folder-node.collapsed > .folder-children {
+        display: none;
+      }
+      /* Стрелки перемещения — СЛЕВА на таймере и на папке (ТЗ 8.4) */
+      .move-buttons {
+        display: inline-flex;
+        gap: 4px;
+        margin-right: 0;
+      }
+      .share-container {
+        margin: 0;
+      }
+
+      /* --- Модальные окна --------------------------------------------- */
       #modalOverlay {
         position: fixed;
         top: 0;
         left: 0;
         right: 0;
         bottom: 0;
-        background: rgba(0, 0, 0, 0.75);
+        background: rgba(4, 9, 24, 0.72);
         z-index: 2000;
         display: flex;
         align-items: center;
@@ -173,17 +618,33 @@
         display: none;
       }
       #modalBox {
-        background: #111111;
-        border: 1px solid #4caf50;
-        border-radius: 6px;
-        padding: 16px;
+        background: #0f1e45;
+        border: 1px solid #2b4a92;
+        border-radius: 14px;
+        box-shadow: 0 18px 50px rgba(2, 8, 28, 0.7);
+        padding: 18px;
         min-width: 320px;
-        max-width: 90%;
-        max-height: 80vh;
+        max-width: min(520px, 92vw);
+        max-height: 82vh;
         overflow: auto;
       }
+      #modalBox .modal-row input[type="text"],
+      #modalBox input[type="password"] {
+        flex: 1 1 140px;
+        width: auto;
+        min-width: 0;
+        max-width: 340px;
+      }
+      #modalBox > input[type="password"],
+      #modalBox > input[type="text"] {
+        width: 100%;
+        max-width: none;
+        box-sizing: border-box;
+        margin: 6px 0;
+      }
       .modal-title {
-        color: #4caf50;
+        color: #6aa7ff;
+        font-size: 14px;
         font-weight: bold;
         margin-bottom: 10px;
       }
@@ -194,8 +655,13 @@
         align-items: center;
       }
       .modal-error {
-        color: #ff6b6b;
+        color: #ff7b8a;
         min-height: 1.2em;
+        margin: 6px 0;
+      }
+      .modal-hint {
+        color: #8ea3d4;
+        font-size: 12px;
         margin: 6px 0;
       }
       .cloud-status div {
@@ -205,28 +671,19 @@
         flex: 1;
         white-space: nowrap;
       }
-      #cloudButton.has-error {
-        border-color: #ff6b6b;
-        color: #ff6b6b;
-      }
-      #cloudButton.synced {
-        border-color: #4caf50;
-      }
       .group-select-item {
         display: block;
         margin: 4px 0;
       }
-      /* --- Конструктор дня ------------------------------------------- */
+
+      /* --- Конструктор дня -------------------------------------------- */
       #modalBox.day-builder {
         min-width: 560px;
         width: 980px;
+        max-width: 94vw;
       }
-      #scheduleStartLabel {
-        white-space: nowrap;
-      }
-      #scheduleStart,
-      #globalEndTime {
-        width: 110px;
+      #modalBox.day-builder .modal-row input[type="text"] {
+        flex: 0 0 auto;
       }
       .dd-toolbar {
         justify-content: flex-start;
@@ -236,155 +693,57 @@
         flex-wrap: wrap;
         align-items: center;
         gap: 6px;
-        border: 1px solid #333;
-        border-radius: 4px;
-        padding: 4px 6px;
+        border: 1px solid #243d7a;
+        border-radius: 10px;
+        padding: 5px 8px;
         margin: 4px 0;
-        background: #000000;
+        background: #0c1a3d;
       }
       .dd-row.dd-group {
-        border-color: #4caf50;
+        border-color: #4668b5;
       }
       .dd-row.dd-red {
-        border-color: #ff4d4d;
-        background: #3a0d0d;
+        border-color: #ff7b8a;
+        background: rgba(255, 123, 138, 0.12);
       }
       .dd-row.dd-blue {
-        border-color: #4da3ff;
-        background: #0d223a;
+        border-color: #6aa7ff;
+        background: rgba(106, 167, 255, 0.14);
       }
       .dd-kind {
-        color: #9bb59b;
-        font-size: 12px;
+        color: #8ea3d4;
+        font-size: 11px;
         min-width: 110px;
       }
-      .dd-name {
-        width: 160px;
+      .dd-row .dd-name {
+        width: 150px;
       }
-      .dd-time {
-        width: 56px;
+      .dd-row .dd-time {
+        width: 64px;
+        text-align: center;
       }
       .dd-duration {
-        color: #cccccc;
+        color: #9fb3e3;
         font-size: 12px;
       }
       .dd-section {
-        margin: 10px 0 4px;
-        color: #4caf50;
+        margin: 12px 0 4px;
+        color: #6aa7ff;
         font-weight: bold;
-        border-top: 1px dashed #4caf50;
-        padding-top: 6px;
+        border-top: 1px dashed #2b4a92;
+        padding-top: 8px;
       }
       .dd-errors {
         white-space: pre-line;
       }
-      /* --- Дерево: папки (визуальные группы) -------------------------
-         Подсветка сиблингов разбиения (.sibling-highlight) и строка
-         «Доля: … ← «родитель»» (.split-share) убраны: принадлежность
-         теперь видна из самого дерева (ТЗ 4.1–4.3). */
-      .folder-node {
-        border: 1px solid #4caf50;
-        border-radius: 5px;
-        background-color: #000000;
-        margin: 6px 0;
-        padding: 6px 8px;
-        width: 100%;
-        max-width: 480px;
-        box-sizing: border-box;
-        flex: 0 1 auto;
-      }
-      .folder-header {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 4px;
-      }
-      .folder-label {
-        min-width: 0;
-        margin-right: 2px;
-      }
-      .folder-name {
-        width: 150px;
-        background-color: #000000;
-        color: #e0e0e0;
-        border: 1px solid #444;
-        padding: 4px;
-      }
-      .folder-target,
-      .folder-share {
-        color: #4caf50;
-        margin: 0 4px;
-        white-space: nowrap;
-      }
-      .folder-share {
-        border: 1px dashed #4caf50;
-        border-radius: 4px;
-        padding: 1px 5px;
-        cursor: help;
-      }
-      /* Стрелка сворачивания группы — СПРАВА (ТЗ 8.3) */
-      .folder-toggle {
-        margin-left: auto;
-        padding: 1px 8px;
-      }
-      .folder-children {
-        margin-left: 18px;
-        padding-left: 6px;
-        border-left: 1px dashed #333333;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-      }
-      .folder-node.collapsed > .folder-children {
-        display: none;
-      }
-      /* Стрелки перемещения — СЛЕВА на таймере и на папке (ТЗ 8.4) */
-      .move-buttons {
-        display: inline-flex;
-        gap: 2px;
-        margin-right: 4px;
-      }
-      .move-buttons .move-button {
-        margin: 0;
-        padding: 1px 6px;
-        font-size: 12px;
-        line-height: 1.2;
-      }
-      /* Строка «Доля» на таймере (ТЗ 3.4): видна и в свёрнутой карточке */
-      .share-container {
-        margin: 6px 0;
-      }
-      .share-container .share-value {
-        color: #4caf50;
-        border: 1px dashed #4caf50;
-        border-radius: 4px;
-        padding: 1px 5px;
-        cursor: help;
-      }
-      .folder-action {
-        padding: 2px 8px;
-      }
-      .modal-hint {
-        color: #888888;
-        font-size: 12px;
-        margin: 6px 0;
-      }
-      #tzHolderButton {
-        white-space: nowrap;
-      }
-      #tzHolderButton.tz-holder {
-        border-color: #4caf50;
-        color: #4caf50;
-      }
-      #tzHolderButton.tz-follower {
-        border-color: #ff6b6b;
-        color: #ff6b6b;
-      }
-      #tzHint {
-        color: #888;
-        font-size: 11px;
-        margin-left: 4px;
-        white-space: nowrap;
+      @media (max-width: 560px) {
+        #globalControls {
+          padding: 6px 8px;
+        }
+        #modalBox.day-builder {
+          min-width: 0;
+          width: 96%;
+        }
       }
     </style>
   </head>
@@ -2434,6 +2793,11 @@
             const timerId = priority.timer.id;
             const priorityDisplay = AppState.getTimerPriorityElement(timerId);
             priorityDisplay.textContent = `Приоритет: ${index + 1}`;
+            // Первый приоритет мягко мигает (только если есть из чего выбирать)
+            priorityDisplay.classList.toggle(
+              "priority-top",
+              index === 0 && timers.length > 1
+            );
           });
           return priorities;
         }
@@ -3062,8 +3426,8 @@
         static createRemainingTimeDisplay(timer) {
           const remainingDisplay = document.createElement("div");
           remainingDisplay.className = "time-display";
-          remainingDisplay.innerHTML = `Осталось: <span id="remaining-${
-            timer.id
+          remainingDisplay.innerHTML = `<span class="lbl">Осталось</span><span id="remaining-${timer.id}" class="${
+            timer.remainingSeconds < 0 ? "time-over" : "time-ok"
           }">${Utils.formatTime(timer.remainingSeconds)}</span>`;
           return remainingDisplay;
         }
@@ -3175,11 +3539,15 @@
           const remainingElem = AppState.getTimerRemainingElement(timer.id);
           if (remainingElem) {
             remainingElem.textContent = Utils.formatTime(remainingTime);
+            // зелёное — время ещё есть, красное — просрочено
+            remainingElem.classList.toggle("time-over", remainingTime < 0);
+            remainingElem.classList.toggle("time-ok", remainingTime >= 0);
           }
         }
         static updateTimerTrackButton(timer) {
           const timerDiv = AppState.getTimerElement(timer.id);
           if (timerDiv) {
+            timerDiv.setAttribute("data-tracking", timer.isTracking ? "true" : "false");
             const buttons = timerDiv.getElementsByTagName("button");
             for (let btn of buttons) {
               if (btn.textContent === "Старт" || btn.textContent === "Пауза") {
@@ -3278,25 +3646,19 @@
         static createPlannedTimeDisplay(timer) {
           const plannedDisplay = document.createElement("div");
           plannedDisplay.className = "time-display";
-          plannedDisplay.innerHTML = `План: <span id="planned-${
-            timer.id
-          }">${Utils.formatTime(timer.plannedSeconds)}</span>`;
+          plannedDisplay.innerHTML = `<span class="lbl">План</span><span id="planned-${timer.id}">${Utils.formatTime(timer.plannedSeconds)}</span>`;
           return plannedDisplay;
         }
         static createTrackedDisplay(timer) {
           const trackedDisplay = document.createElement("div");
           trackedDisplay.className = "time-display";
-          trackedDisplay.innerHTML = `Факт: <span id="tracked-${
-            timer.id
-          }">${Utils.formatTime(timer.trackedSeconds)}</span>`;
+          trackedDisplay.innerHTML = `<span class="lbl">Факт</span><span id="tracked-${timer.id}">${Utils.formatTime(timer.trackedSeconds)}</span>`;
           return trackedDisplay;
         }
         static createTotalDisplay(timer) {
           const totalDisplay = document.createElement("div");
           totalDisplay.className = "time-display";
-          totalDisplay.innerHTML = `Всего: <span id="total-${
-            timer.id
-          }">${Utils.formatTime(timer.lifetimeTotalSeconds)}</span>`;
+          totalDisplay.innerHTML = `<span class="lbl">Всего</span><span id="total-${timer.id}">${Utils.formatTime(timer.lifetimeTotalSeconds)}</span>`;
           return totalDisplay;
         }
         static updateRecommendationsDisplay(recommendations) {
@@ -6612,15 +6974,16 @@
       class Utils {
         static formatTime(seconds) {
           seconds = Math.floor(seconds);
-          // Фикс: отрицательные значения форматируются по модулю со знаком
-          // спереди. Раньше Math.floor по каждому компоненту давал misleading
-          // "-1ч -5м 0с" для переработки в 5 минут (-300с).
+          // Компактный вид ЧЧ:ММ:СС (02:00:00). Отрицательные значения
+          // форматируются по модулю со знаком спереди: раньше Math.floor по
+          // каждому компоненту давал бы misleading "-1:-5:0" для -300с.
           const sign = seconds < 0 ? "-" : "";
           const abs = Math.abs(seconds);
           const hrs = Math.floor(abs / 3600);
           const mins = Math.floor((abs % 3600) / 60);
           const secs = abs % 60;
-          return `${sign}${hrs}ч ${mins}м ${secs}с`;
+          const pad = n => String(n).padStart(2, "0");
+          return `${sign}${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
         }
         static convertTimeInputsToSeconds(
           hoursInput,

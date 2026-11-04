@@ -233,7 +233,7 @@ test("«План», «Осталось» и «Факт» в DOM отражают
   ctx.tick();
   assert.equal(ctx.cardText(a, "planned"), ctx.Utils.formatTime(a.plannedSeconds));
   assert.equal(ctx.cardText(a, "remaining"), ctx.Utils.formatTime(a.plannedSeconds), "факт нулевой");
-  assert.equal(ctx.cardText(a, "tracked"), "0ч 0м 0с");
+  assert.equal(ctx.cardText(a, "tracked"), "00:00:00");
   const remainingBefore = ctx.TimeCalculator.getTotalTime();
   const plansBefore = nums(ctx.AppState.getTimers().map(t => t.plannedSeconds));
   assert.ok(

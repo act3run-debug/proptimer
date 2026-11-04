@@ -520,12 +520,12 @@ test("недоступный localStorage не роняет сохранение
 test("Utils.formatTime: положительные и отрицательные значения", () => {
   const ctx = setup();
   const f = s => ctx.Utils.formatTime(s);
-  assert.equal(f(0), "0ч 0м 0с");
-  assert.equal(f(59), "0ч 0м 59с");
-  assert.equal(f(3600), "1ч 0м 0с");
-  assert.equal(f(4320), "1ч 12м 0с");
-  assert.equal(f(-300), "-0ч 5м 0с", "переработка форматируется по модулю со знаком");
-  assert.equal(f(-3661), "-1ч 1м 1с");
+  assert.equal(f(0), "00:00:00");
+  assert.equal(f(59), "00:00:59");
+  assert.equal(f(3600), "01:00:00");
+  assert.equal(f(4320), "01:12:00");
+  assert.equal(f(-300), "-00:05:00", "переработка форматируется по модулю со знаком");
+  assert.equal(f(-3661), "-01:01:01");
   ctx.close();
 });
 

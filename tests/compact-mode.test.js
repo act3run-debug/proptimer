@@ -432,9 +432,9 @@ test("«Факт» и «Осталось» обновляются в свёрн�
   ctx.clock.advanceSec(300);
   ctx.tick();
   assert.equal(isCollapsed(ctx, a), true);
-  assert.match(ctx.cardText(a, "tracked"), /5м 0с/, "Факт растёт");
+  assert.match(ctx.cardText(a, "tracked"), /00:05:00/, "Факт растёт");
   const remaining = ctx.cardText(a, "remaining");
-  assert.match(remaining, /^-?\d+ч \d+м \d+с$/, `Осталось: ${remaining}`);
+  assert.match(remaining, /^-?\d{2,}:\d{2}:\d{2}$/, `Осталось: ${remaining}`);
   ctx.close();
 });
 
