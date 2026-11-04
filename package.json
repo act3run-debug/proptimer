@@ -5,8 +5,8 @@
   "description": "Автотесты для однофайлового приложения index.html (Пропорциональный таймер). Тесты извлекают inline-скрипт прямо из index.html, поэтому всегда проверяют актуальный код.",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test tests/",
-    "test:verbose": "node --test --test-reporter=spec tests/"
+    "test": "node --test",
+    "test:verbose": "node --test --test-reporter=spec"
   },
   "devDependencies": {
     "jsdom": "^26.1.0"

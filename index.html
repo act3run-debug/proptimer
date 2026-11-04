@@ -1778,6 +1778,12 @@
           SessionManager.clearJustAfterResetFlag();
           TimerModel.resetTimer(timer);
           TimerModel.rebaseTracking(timer);
+          // «Сброс» меняет «Факт» (и «Всего»), а от них зависят рекомендации
+          // и приоритеты ВСЕХ таймеров (общий остаток и сумма базы).
+          // Автообновление в начале клика отработало ещё до сброса, поэтому
+          // без этого пересчёта «Рекомендация» оставалась прежней. Считаем до
+          // bumpControl, чтобы в облако ушло уже актуальное значение.
+          AppController.calculateRecommendations();
           CloudSync.bumpControl();
           AppState.notify("timerUpdated", timer);
           AppState.notify("displayNeedsUpdate");
@@ -3671,21 +3677,33 @@
           }
         }
         /**
+         * Может ли узел принять добавку к целям: таймер — всегда, папка —
+         * только если на любой глубине в ней есть хотя бы один таймер.
+         * Пустая папка ничего принять не может (делить нечем между детьми).
+         */
+        static canAbsorb(node) {
+          if (!node) return false;
+          if (this.isTimerNode(node)) return Boolean(this.timerById(node.id));
+          return (node.children || []).some(child => this.canAbsorb(child));
+        }
+        /**
          * Нечего перераспределять пропорционально — делим поровну (ТЗ 3.8).
          * Часть, доставшаяся папке, делится поровну между её детьми и так
-         * дальше на любую глубину (ТЗ 3.8.4).
+         * дальше на любую глубину (ТЗ 3.8.4). Пустые папки (и папки, в которых
+         * нет ни одного таймера) в делёж не входят — принять добавку им
+         * нечем. Возвращает false, если принять некому: тогда вызывающий
+         * обязан найти получателя сам, иначе сумма приложения перестала бы
+         * быть равной 1 (ТЗ 3.2.1).
          */
         static distributeEqually(nodes, amountTarget, amountWeight) {
-          const list = (nodes || []).slice();
-          if (!list.length) return;
+          const list = (nodes || []).filter(node => this.canAbsorb(node));
+          if (!list.length) return false;
           const aw = amountWeight === undefined ? amountTarget : amountWeight;
           const perT = (Number(amountTarget) || 0) / list.length;
           const perW = (Number(aw) || 0) / list.length;
           list.forEach(node => {
             if (this.isFolder(node)) {
-              if ((node.children || []).length) {
-                this.distributeEqually(node.children, perT, perW);
-              }
+              this.distributeEqually(node.children, perT, perW);
               return;
             }
             const timer = this.timerById(node.id);
@@ -3693,12 +3711,14 @@
             timer.targetProportion = (Number(timer.targetProportion) || 0) + perT;
             timer.proportion = (Number(timer.proportion) || 0) + perW;
           });
+          return true;
         }
         /**
          * Вернуть уровню `amount` (цели) и `amountWeight` (веса), сохранив
          * сумму уровня (ТЗ 7.2.2/7.3.2). parentNode = null означает корень.
-         * Если уровень опустел — поднимаемся выше: сумма родителя упала, и
-         * иначе общая сумма приложения перестала бы быть равной 1 (ТЗ 3.2.1).
+         * Если уровень не может принять добавку (пуст или состоит из одних
+         * пустых папок) — поднимаемся выше: сумма родителя упала, и иначе
+         * общая сумма приложения перестала бы быть равной 1 (ТЗ 3.2.1).
          */
         static giveToLevel(parentNode, amount, amountWeight, guard) {
           const step = guard || 0;
@@ -3716,28 +3736,13 @@
             children.forEach(child => this.scaleNode(child, fT, fW));
             return;
           }
-          if (children.length) {
-            this.distributeEqually(children, amountT, amountW);
-            return;
-          }
+          if (this.distributeEqually(children, amountT, amountW)) return;
           if (!parentNode) return;
-          // Уровень пуст: производная цель папки parentNode стала нулевой,
-          // поэтому отдаём освободившееся её сиблингам (ТЗ 7.3).
+          // Уровень принять не может: производная цель папки parentNode
+          // нулевая, поэтому освободившееся уходит на уровень выше — её
+          // сиблингам (ТЗ 7.3); пустая папка parentNode в делёж не входит.
           const loc = this.findNode(parentNode.id);
           if (!loc) return;
-          const rest = loc.siblings.filter(n => n !== loc.node);
-          const restT = this.levelSumNodes(rest);
-          const restW = this.levelWeightNodes(rest);
-          if (rest.length && restT > 0) {
-            const fT = (restT + amountT) / restT;
-            const fW = restW > 0 ? (restW + amountW) / restW : 1;
-            rest.forEach(n => this.scaleNode(n, fT, fW));
-            return;
-          }
-          if (rest.length) {
-            this.distributeEqually(rest, amountT, amountW);
-            return;
-          }
           this.giveToLevel(loc.parent, amountT, amountW, step + 1);
         }
 
@@ -3755,15 +3760,19 @@
           const othersT = this.levelSumNodes(others);
           const othersW = this.levelWeightNodes(others);
           const p = this.clamp01(share);
-          const newTarget = p * sumT;
-          const newWeight = p * sumW;
+          let newTarget = p * sumT;
+          let newWeight = p * sumW;
           if (othersT > 0) {
             const fT = (sumT - newTarget) / othersT;
             const fW = othersW > 0 ? (sumW - newWeight) / othersW : 1;
             others.forEach(n => this.scaleNode(n, fT, fW));
-          } else {
-            // ТЗ 3.8.2: у остальных нули — освободившееся поровну
-            this.distributeEqually(others, sumT - newTarget, sumW - newWeight);
+          } else if (!this.distributeEqually(others, sumT - newTarget, sumW - newWeight)) {
+            // ТЗ 3.8.2: у остальных нули — освободившееся поровну. Но если
+            // принять некому (сиблинги — только пустые папки), правка
+            // невозможна: таймер остаётся единственным держателем суммы
+            // уровня, иначе она (и сумма приложения, ТЗ 3.2.1) уменьшилась бы.
+            newTarget = sumT;
+            newWeight = sumW;
           }
           timer.targetProportion = newTarget;
           timer.proportion = newWeight;
@@ -3775,9 +3784,11 @@
         static setTargetGlobal(id, value) {
           const timer = this.timerById(id);
           if (!timer) return false;
-          const v = this.clamp01(value);
           const all = AppState.getTimers();
           const others = all.filter(t => t !== timer);
+          // Единственный таймер приложения держит всю сумму (ТЗ 3.2.1):
+          // перераспределять не на кого, значит его цель остаётся равной 1.
+          const v = others.length ? this.clamp01(value) : 1;
           const totalWeight = all.reduce((s, t) => s + (Number(t.proportion) || 0), 0);
           const othersTarget = others.reduce(
             (s, t) => s + (Number(t.targetProportion) || 0),
@@ -5112,21 +5123,30 @@
           const id = Number(folderEl.getAttribute("data-folder-id"));
           return Number.isFinite(id) ? id : null;
         }
+        static issuedIds = new Set();
         static generateId() {
-          return Date.now() + Math.random();
-        }
-        static uniqueId() {
-          // id папок и таймеров живут в одном числовом пространстве, поэтому
-          // новый id проверяется на столкновение с существующими узлами.
-          let id = this.generateId();
+          // Date.now() ~ 1.8e12 оставляет в дробной части double всего ~12 бит,
+          // поэтому Date.now() + Math.random() в пределах одной миллисекунды
+          // (разбиение на подзадачи, быстрые создания, замороженные часы)
+          // с заметной вероятностью повторяется. Повтор id означал бы два
+          // узла дерева на один таймер — проверяем на столкновение.
+          let id = Date.now() + Math.random();
           let guard = 0;
           while (
-            guard++ < 32 &&
-            (AppState.findTimerById(id) || TreeModel.findNode(id))
+            guard++ < 256 &&
+            (this.issuedIds.has(id) ||
+              AppState.findTimerById(id) ||
+              TreeModel.findNode(id))
           ) {
-            id = this.generateId();
+            id = Date.now() + Math.random();
           }
+          this.issuedIds.add(id);
           return id;
+        }
+        static uniqueId() {
+          // id папок и таймеров живут в одном числовом пространстве —
+          // generateId уже гарантирует отсутствие столкновений с обоими.
+          return this.generateId();
         }
       }
       // ============================================================
