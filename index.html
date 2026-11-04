@@ -216,6 +216,67 @@
         display: block;
         margin: 4px 0;
       }
+      /* --- Конструктор дня ------------------------------------------- */
+      #modalBox.day-builder {
+        min-width: 560px;
+        width: 880px;
+      }
+      #scheduleStartLabel {
+        white-space: nowrap;
+      }
+      #scheduleStart {
+        width: 110px;
+      }
+      .dd-toolbar {
+        justify-content: flex-start;
+      }
+      .dd-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 4px 6px;
+        margin: 4px 0;
+        background: #000000;
+      }
+      .dd-row.dd-group {
+        border-color: #4caf50;
+      }
+      .dd-row.dd-red {
+        border-color: #ff4d4d;
+        background: #3a0d0d;
+      }
+      .dd-row.dd-blue {
+        border-color: #4da3ff;
+        background: #0d223a;
+      }
+      .dd-kind {
+        color: #9bb59b;
+        font-size: 12px;
+        min-width: 110px;
+      }
+      .dd-name {
+        width: 160px;
+      }
+      .dd-time {
+        width: 56px;
+      }
+      .dd-duration {
+        color: #cccccc;
+        font-size: 12px;
+      }
+      .dd-section {
+        margin: 10px 0 4px;
+        color: #4caf50;
+        font-weight: bold;
+        border-top: 1px dashed #4caf50;
+        padding-top: 6px;
+      }
+      .dd-errors {
+        white-space: pre-line;
+      }
       /* --- Дерево: папки (визуальные группы) -------------------------
          Подсветка сиблингов разбиения (.sibling-highlight) и строка
          «Доля: … ← «родитель»» (.split-share) убраны: принадлежность
@@ -332,6 +393,10 @@
       <label> Конец: <input type="time" id="globalEndTime" />
         <span id="tzHint"></span>
       </label>
+      <label id="scheduleStartLabel" title="Калибрует расписание «Конструктора дня»; на Цели и планы не влияет">
+        Начало (для конструктора):
+        <input type="time" id="scheduleStart" value="00:00" />
+      </label>
       <button data-action="add-timer">+ Добавить таймер</button>
       <!-- Кнопка «Отошёл» убрана из интерфейса: её механизм (away-режим)
            теперь включается автоматически, пока не идёт отсчёт ни одного
@@ -360,6 +425,7 @@
       <div id="operationsMenu">
         <button data-action="create-group">Создать группу</button>
         <button data-action="create-in-group">Создать задачу внутри группы</button>
+        <button data-action="day-builder">Конструктор дня</button>
       </div>
     </div>
     <div id="timersContainer"></div>
@@ -438,9 +504,30 @@
             "input",
             TimerController.handleGlobalEndTimeInput
           );
-          document
-            .getElementById("modalOverlay")
-            .addEventListener("click", ModalController.handleOverlayClick);
+          // «Конец» влияет на расписание конструктора (3.3.5, 3.4, 5.8)
+          globalEndTimeInput.addEventListener("input", () =>
+            ScheduleModel.onEndFieldTyping()
+          );
+          globalEndTimeInput.addEventListener("change", () =>
+            ScheduleModel.onEndFieldCommitted()
+          );
+          const scheduleStartInput = document.getElementById("scheduleStart");
+          if (scheduleStartInput) {
+            scheduleStartInput.addEventListener("input", e =>
+              ScheduleModel.onStartField(e.target.value, false)
+            );
+            scheduleStartInput.addEventListener("change", e =>
+              ScheduleModel.onStartField(e.target.value, true)
+            );
+          }
+          const modalOverlay = document.getElementById("modalOverlay");
+          modalOverlay.addEventListener("click", ModalController.handleOverlayClick);
+          modalOverlay.addEventListener("change", e =>
+            DayBuilder.handleChange(e.target)
+          );
+          modalOverlay.addEventListener("input", e =>
+            DayBuilder.handleInput(e.target)
+          );
         }
         static handleFieldFocusTrigger(event) {
           // «Дать фокус» / «убрать фокус» с поля — триггер автообновления
@@ -455,6 +542,8 @@
           return TimerController.handleTimersContainerChange(event);
         }
         static handleGlobalControlsClick(event) {
+          // Открыт «Конструктор дня»: основной экран не редактируется (11.4.1)
+          if (DayBuilder.isOpen()) return;
           // Автообновление срабатывает при каждом клике ДО целевого действия
           // (бывшие кнопки «Обновить всё», «Рекомендация»,
           // «Применить рекомендацию» убраны из интерфейса).
@@ -472,6 +561,9 @@
             } else if (action === "create-in-group") {
               MenuController.hide();
               GroupTaskController.openModal();
+            } else if (action === "day-builder") {
+              MenuController.hide();
+              DayBuilder.open();
             } else if (action === "save") {
               AppController.saveTimers();
             } else if (action === "export") {
@@ -565,6 +657,7 @@
           // порядка списка таймеров, если ключа "tree" ещё нет)
           TreeModel.ensureTimerNodes();
           TimerView.renderTree();
+          ScheduleModel.renderStartField();
           // Носитель часового пояса: индикация + заявление при отсутствии
           TimeZoneHolder.ensure();
         }
@@ -712,6 +805,7 @@
           const index = timers.findIndex(t => t.id === timerId);
           if (index === -1) return null;
           const parent = timers[index];
+          ScheduleModel.reconcile();
           const totalShare = specs.reduce((sum, x) => sum + x.share, 0);
           if (!(totalShare > 0)) return null;
           const children = specs.map(spec => {
@@ -769,6 +863,7 @@
           } else {
             TreeModel.root().push(folderNode);
           }
+          ScheduleModel.replaceId(timerId, folderNode.id);
           AppState.setTimers(newTimers);
           TimerView.forgetCompactState(timerId);
           TreeModel.changed();
@@ -888,6 +983,9 @@
         // Единственный источник истины о порядке — он же сериализуется
         // в localStorage ("tree") и уезжает в облако (ТЗ 10.1).
         tree: [],
+        // Расписание «Конструктора дня»: порядок по времени, «Начало»,
+        // «Конец», начала элементов без конца (ScheduleModel)
+        schedule: null,
         globalEndTime: null,
         initialAvailable: 0,
         lastUpdateTime: new Date(),
@@ -902,6 +1000,10 @@
         },
         getTree() {
           return this.tree;
+        },
+        getSchedule() {
+          if (!this.schedule) this.schedule = ScheduleModel.empty();
+          return this.schedule;
         },
         setTree(newTree) {
           this.tree = Array.isArray(newTree) ? newTree : [];
@@ -1101,6 +1203,10 @@
             "tree",
             JSON.stringify(AppState.getTree())
           );
+          this.setItemToLocalStorage(
+            "schedule",
+            JSON.stringify(AppState.getSchedule())
+          );
           // Фикс БАГ #2: сохраняем также время "Конца". Раньше оно терялось
           // при перезагрузке, а lastSessionEndTime оставался — из-за этого
           // после перезагрузки за границей сессии начинался бесконечный сброс.
@@ -1264,6 +1370,7 @@
             TreeModel.sanitizeTree(this.parseTreeJSON(treeRaw))
           );
           TreeModel.ensureTimerNodes();
+          ScheduleModel.load(this.getItemFromLocalStorage("schedule"));
           const wasTimerActive = this.getItemFromLocalStorage("wasTimerActive");
           if (wasTimerActive === "true") {
             // Зеркалируемый трекинг переживает перезагрузку:
@@ -1398,6 +1505,7 @@
             appVersion: APP_VERSION,
             exportedAt: new Date(CloudSync.serverNow()).toISOString(),
             tree: AppState.getTree(),
+            schedule: AppState.getSchedule(),
             timers: timersData,
           };
           const timersJSON = JSON.stringify(payload, null, 2);
@@ -1454,6 +1562,12 @@
                   TreeModel.sanitizeTree(isV2 ? imported.tree : [])
                 );
                 TreeModel.ensureTimerNodes();
+                // Расписание «Конструктора дня» входит в экспорт (6.4)
+                ScheduleModel.load(isV2 ? imported.schedule : null);
+                if (AppState.getSchedule().saved) {
+                  ScheduleModel.writeEndField(AppState.getSchedule().end);
+                }
+                ScheduleModel.renderStartField();
                 AppState.getTimers().forEach(timer => {
                   TimerView.addTimerElement(timer);
                   const targetProportionInput =
@@ -1502,6 +1616,7 @@
       }
       class TimerController {
         static handleTimersContainerClick(event) {
+          if (DayBuilder.isOpen()) return; // основной экран заблокирован (11.4.1)
           const target = event.target;
           // Стрелка компактного режима — чисто визуальное действие: пересчёт
           // (autoUpdate) НЕ запускаем, чтобы раскрытие/сворачивание карточки
@@ -1582,6 +1697,7 @@
           }
         }
         static handleTimersContainerChange(event) {
+          if (DayBuilder.isOpen()) return; // основной экран заблокирован (11.4.1)
           const target = event.target;
           if (target.tagName !== "INPUT") return;
           const action = target.getAttribute("data-action");
@@ -3408,6 +3524,8 @@
           return AppState.getTree();
         }
         static changed() {
+          // Структура/Цели изменились — расписание конструктора следует за ними
+          if (typeof ScheduleModel !== "undefined") ScheduleModel.reconcile();
           AppState.notify("treeChanged", AppState.getTree());
         }
         static isFolder(node) {
@@ -4560,6 +4678,1447 @@
           return false;
         }
       }
+      // ============================================================
+      //  «Конструктор дня» (Требования-конструктор-дня-v3.md).
+      //
+      //  Модель: расписание НЕ хранит интервалы — оно выводится из Целей
+      //  основного экрана, поэтому «основной экран → конструктор» (раздел 11)
+      //  синхронизируется мгновенно и без отдельной механики:
+      //    длительность расписания D = (Конец − Начало) по циферблату
+      //    (при равных — 24 ч), узлы идут подряд от «Начала» в сохранённом
+      //    порядке по времени, длительность узла = Цель × D (внутри группы —
+      //    от её интервала). Хранится только то, чего нет в Целях:
+      //    порядок по времени, «Начало», «Конец» и начала элементов без конца.
+      //  Окно конструктора работает с ЧЕРНОВИКОМ (DayDraft) и переносит его
+      //  на основной экран только по «Сохранить» (10.1).
+      // ============================================================
+      class ScheduleModel {
+        static DAY = 1440;
+        static EPS = 1e-9;
+        static empty() {
+          return {
+            saved: false,
+            start: 0,
+            end: 0,
+            order: { root: [], folders: {} },
+            startOnly: {},
+          };
+        }
+        static norm(m) {
+          return ((Number(m) % 1440) + 1440) % 1440;
+        }
+        /** Длительность интервала по циферблату: равные границы = 24 часа (4.6). */
+        static dur(s, e) {
+          const d = this.norm(e - s);
+          return d < this.EPS ? 1440 : d;
+        }
+        /** Конец, записанный как 00:00, — это 24:00 (4.3). */
+        static normEnd(m) {
+          const v = this.norm(m);
+          return v < this.EPS ? 1440 : v;
+        }
+        static circ(a, b) {
+          return Math.min(this.norm(a - b), this.norm(b - a));
+        }
+        static parseHM(text, allow24) {
+          const m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(
+            text === null || text === undefined ? "" : String(text)
+          );
+          if (!m) return null;
+          const h = Number(m[1]);
+          const mi = Number(m[2]);
+          if (mi > 59 || h > 24 || (h === 24 && (mi !== 0 || !allow24))) {
+            return null;
+          }
+          return h * 60 + mi;
+        }
+        static parseStart(text) {
+          return this.parseHM(text, false);
+        }
+        static parseEnd(text) {
+          const v = this.parseHM(text, true);
+          return v === null ? null : v === 0 ? 1440 : v;
+        }
+        static pad(n) {
+          return String(n).padStart(2, "0");
+        }
+        static fmtStart(m) {
+          const x = Math.round(this.norm(m));
+          const y = x === 1440 ? 0 : x;
+          return `${this.pad(Math.floor(y / 60))}:${this.pad(y % 60)}`;
+        }
+        static fmtEnd(m) {
+          if (Math.round(m) === 1440) return "24:00";
+          return this.fmtStart(m);
+        }
+        static fmtDur(d) {
+          if (d === null || d === undefined) return "—";
+          const t = Math.round(d);
+          return `${Math.floor(t / 60)}ч ${t % 60}м`;
+        }
+
+        // --- хранилище ------------------------------------------------
+        static sanitize(raw) {
+          const out = this.empty();
+          let obj = raw;
+          if (typeof raw === "string") {
+            try {
+              obj = JSON.parse(raw);
+            } catch (e) {
+              obj = null;
+            }
+          }
+          if (!obj || typeof obj !== "object" || Array.isArray(obj)) return out;
+          const n = v => (Number.isFinite(Number(v)) ? this.norm(Number(v)) : 0);
+          out.saved = obj.saved === true;
+          out.start = n(obj.start);
+          out.end = n(obj.end);
+          const ids = a =>
+            Array.isArray(a) ? a.map(Number).filter(Number.isFinite) : [];
+          if (obj.order && typeof obj.order === "object") {
+            out.order.root = ids(obj.order.root);
+            const folders = obj.order.folders || {};
+            Object.keys(folders).forEach(k => {
+              out.order.folders[k] = ids(folders[k]);
+            });
+          }
+          if (obj.startOnly && typeof obj.startOnly === "object") {
+            Object.keys(obj.startOnly).forEach(k => {
+              const v = Number(obj.startOnly[k]);
+              if (Number.isFinite(v)) out.startOnly[k] = this.norm(v);
+            });
+          }
+          return out;
+        }
+        static load(raw) {
+          AppState.schedule = this.sanitize(raw);
+          return AppState.schedule;
+        }
+        static endMinutes() {
+          const el = AppState.getGlobalEndTimeElement();
+          const parsed = TimeCalculator.parseGlobalEndTime(el ? el.value : "");
+          return parsed ? parsed[0] * 60 + parsed[1] : null;
+        }
+
+        // --- согласование с деревом (11.3, 11.5, 12.2) ---------------
+        static isTimed(node) {
+          return TreeModel.nodeTarget(node) > 1e-12;
+        }
+        /**
+         * Привести порядок по времени к текущему дереву: ушедшие/обнулённые
+         * узлы выпадают, новые (Цель > 0) становятся ПОСЛЕДНИМИ в своём
+         * уровне — в корне это «непосредственно перед промежутком» (11.3.5).
+         */
+        static reconcile() {
+          const sched = AppState.getSchedule();
+          const fix = (list, children) => {
+            const want = (children || []).filter(
+              n => n && typeof n === "object" && this.isTimed(n)
+            );
+            const wantIds = new Set(want.map(n => Number(n.id)));
+            const kept = [];
+            (list || []).forEach(id => {
+              const num = Number(id);
+              if (wantIds.has(num) && !kept.includes(num)) kept.push(num);
+            });
+            want.forEach(n => {
+              const num = Number(n.id);
+              if (!kept.includes(num)) kept.push(num);
+            });
+            return kept;
+          };
+          sched.order.root = fix(sched.order.root, TreeModel.root());
+          const folders = {};
+          TreeModel.allFolderNodes().forEach(f => {
+            folders[String(f.id)] = fix(
+              sched.order.folders[String(f.id)],
+              f.children
+            );
+          });
+          sched.order.folders = folders;
+          // начала элементов без конца живут, пока у элемента нет Цели
+          Object.keys(sched.startOnly).forEach(k => {
+            const loc = TreeModel.findNode(Number(k));
+            if (!loc || this.isTimed(loc.node)) delete sched.startOnly[k];
+          });
+        }
+        /** Разбиение: папка занимает в порядке место исходного таймера. */
+        static replaceId(oldId, newId) {
+          const sched = AppState.getSchedule();
+          const swap = list => {
+            const i = list.findIndex(x => Number(x) === Number(oldId));
+            if (i === -1) return false;
+            list[i] = Number(newId);
+            return true;
+          };
+          if (swap(sched.order.root)) return;
+          Object.keys(sched.order.folders).forEach(k => {
+            swap(sched.order.folders[k]);
+          });
+        }
+
+        // --- раскладка по циферблату ----------------------------------
+        static computeLayout() {
+          const sched = AppState.getSchedule();
+          this.reconcile();
+          const S = sched.start;
+          const D = this.dur(S, sched.end);
+          const map = new Map();
+          const rootList = [];
+          const place = (ids, start, span, out) => {
+            const locs = ids
+              .map(id => TreeModel.findNode(id))
+              .filter(Boolean);
+            const total = locs.reduce(
+              (sum, loc) => sum + TreeModel.nodeTarget(loc.node),
+              0
+            );
+            let cur = start;
+            locs.forEach(loc => {
+              const t = TreeModel.nodeTarget(loc.node);
+              const d = total > 0 ? (t / total) * span : 0;
+              const entry = { id: Number(loc.node.id), s: cur, d };
+              map.set(entry.id, entry);
+              if (out) out.push(entry);
+              if (TreeModel.isFolder(loc.node)) {
+                place(sched.order.folders[String(loc.node.id)] || [], cur, d);
+              }
+              cur += d;
+            });
+          };
+          place(sched.order.root, S, D, rootList);
+          return { map, root: rootList, S, E: sched.end, D };
+        }
+        static layout() {
+          this.syncFromFields();
+          return this.computeLayout();
+        }
+
+        // --- «Конец» и «Начало (для конструктора)» на основном экране --
+        static renderStartField() {
+          const el = document.getElementById("scheduleStart");
+          if (el) el.value = this.fmtStart(AppState.getSchedule().start);
+        }
+        static writeEndField(minutes) {
+          const el = AppState.getGlobalEndTimeElement();
+          if (!el) return;
+          el.value = this.fmtStart(minutes);
+          TimerController.handleGlobalEndTimeInput({ target: el });
+        }
+        /** Есть ли промежуток: «Начало» и «Конец» расходятся (3.3.3). */
+        static hasGap() {
+          const s = AppState.getSchedule();
+          return Math.round(s.start) !== Math.round(s.end);
+        }
+        /** Подтянуть расписание под поле «Конец», изменённое пользователем. */
+        static syncFromFields() {
+          const sched = AppState.getSchedule();
+          const e = this.endMinutes();
+          if (e !== null && e !== Math.round(sched.end)) this.onEndChanged(e);
+          return sched;
+        }
+        static onEndChanged(newE) {
+          const sched = AppState.getSchedule();
+          const oldE = sched.end;
+          if (sched.saved && Math.round(sched.start) !== Math.round(oldE)) {
+            // Промежуток есть: «Конец» — начало промежутка, расписание
+            // сдвигается монолитным куском, «Начало» — на ту же величину (3.4)
+            sched.start = this.norm(sched.start + (newE - oldE));
+            sched.end = newE;
+          } else if (sched.saved && sched.order.root.length) {
+            // Промежутка нет: «Конец» подстраивается под ближайшее время
+            // конца активности, «Начало» совпадает с ним (5.8, 5.10, 5.11)
+            const b = this.snapToBoundary(newE);
+            sched.start = b;
+            sched.end = b;
+            if (b !== newE) this.writeEndField(b);
+          } else {
+            // Расписание ещё не сохранялось из конструктора: «Конец» влияет
+            // на «Начало» (3.3.5), без промежутка они совпадают (3.3.8)
+            sched.start = newE;
+            sched.end = newE;
+          }
+          this.renderStartField();
+        }
+        static onStartChanged(v, commit) {
+          const sched = AppState.getSchedule();
+          this.syncFromFields();
+          const E = Math.round(sched.end);
+          if (!sched.saved) {
+            sched.start = v;
+            sched.end = v;
+            if (this.endMinutes() !== v) this.writeEndField(v);
+          } else if (Math.round(sched.start) !== E) {
+            // Есть промежуток: первая активность начинается в указанное
+            // время, «Конец» не меняется, размер промежутка изменяется (3.5)
+            sched.start = v;
+          } else if (commit && sched.order.root.length) {
+            // Без промежутка: подстраивается под начало ближайшей активности
+            const b = this.snapToBoundary(v);
+            sched.start = b;
+            sched.end = b;
+            if (b !== E) this.writeEndField(b);
+          } else {
+            return false;
+          }
+          this.renderStartField();
+          return true;
+        }
+        /** Ближайшая граница корневых активностей; порядок поворачивается. */
+        static snapToBoundary(target) {
+          const sched = AppState.getSchedule();
+          const lay = this.computeLayout();
+          if (!lay.root.length) return this.norm(target);
+          let best = 0;
+          let bestDist = Infinity;
+          lay.root.forEach((entry, i) => {
+            const dist = this.circ(entry.s, target);
+            if (dist < bestDist - 1e-9) {
+              bestDist = dist;
+              best = i;
+            }
+          });
+          const order = sched.order.root;
+          sched.order.root = order.slice(best).concat(order.slice(0, best));
+          return this.norm(Math.round(lay.root[best].s));
+        }
+        // обработчики полей основного экрана
+        static onEndFieldTyping() {
+          // Пока пользователь печатает, подстраиваем только случай с промежутком
+          // (монолитный сдвиг); «прилипание» к концу активности — по завершении
+          if (AppState.getSchedule().saved && this.hasGap()) {
+            this.syncFromFields();
+          }
+        }
+        static onEndFieldCommitted() {
+          this.syncFromFields();
+          this.persist();
+        }
+        static onStartField(value, commit) {
+          const v = this.parseStart(value);
+          if (v === null) return;
+          if (this.onStartChanged(v, commit)) this.persist();
+        }
+        static persist() {
+          StorageService.saveTimersToLocalStorage();
+          CloudSync.bumpControl();
+        }
+      }
+
+      // ============================================================
+      //  Черновик окна «Конструктор дня»: чистая структура данных без DOM.
+      //  Узел: { id, kind: "t"|"f", name, parent, s, e, isNew }.
+      //  s — минута начала (0..1439) или null; e — минута конца (1..1440,
+      //  1440 = «24:00») или null (конца нет — 4.7). Все правки живут
+      //  здесь и попадают на основной экран только через commit().
+      // ============================================================
+      class DayDraft {
+        constructor() {
+          this.nodes = new Map();
+          this.tempSeq = 0;
+          this.S = 0;
+          this.E = 0;
+          this.saved = false;
+        }
+        static fromMain() {
+          const draft = new DayDraft();
+          const sched = AppState.getSchedule();
+          const lay = ScheduleModel.layout();
+          draft.S = sched.start;
+          draft.E = sched.end;
+          draft.saved = sched.saved;
+          const SM = ScheduleModel;
+          const walk = (nodes, parent) => {
+            (nodes || []).forEach(node => {
+              const id = Number(node.id);
+              const isFolder = TreeModel.isFolder(node);
+              const timer = isFolder ? null : AppState.findTimerById(id);
+              const entry = {
+                id,
+                kind: isFolder ? "f" : "t",
+                name: isFolder ? node.name || "" : timer ? timer.name || "" : "",
+                parent,
+                s: null,
+                e: null,
+                isNew: false,
+              };
+              const place = lay.map.get(id);
+              if (place && place.d > 0) {
+                const a = Math.round(place.s);
+                const b = Math.round(place.s + place.d);
+                entry.s = SM.norm(a);
+                entry.e = SM.normEnd(b);
+                // минимум минута, полные сутки остаются полными сутками
+                if (b - a < 1 && place.d < 1439.5) {
+                  entry.e = SM.normEnd(entry.s + 1);
+                }
+              } else if (sched.startOnly[String(id)] !== undefined) {
+                entry.s = SM.norm(sched.startOnly[String(id)]);
+              }
+              draft.nodes.set(id, entry);
+              if (isFolder) walk(node.children, id);
+            });
+          };
+          walk(TreeModel.root(), null);
+          return draft;
+        }
+        clone() {
+          const copy = new DayDraft();
+          this.nodes.forEach((n, id) => copy.nodes.set(id, { ...n }));
+          copy.tempSeq = this.tempSeq;
+          copy.S = this.S;
+          copy.E = this.E;
+          copy.saved = this.saved;
+          return copy;
+        }
+
+        // --- доступ ------------------------------------------------------
+        get(id) {
+          return this.nodes.get(Number(id)) || null;
+        }
+        all() {
+          return Array.from(this.nodes.values());
+        }
+        isGroup(n) {
+          return Boolean(n) && n.kind === "f";
+        }
+        children(parentId) {
+          const pid = parentId === null || parentId === undefined ? null : Number(parentId);
+          return this.all().filter(n => n.parent === pid);
+        }
+        timed(n) {
+          return Boolean(n) && n.s !== null && n.e !== null;
+        }
+        duration(n) {
+          return this.timed(n) ? ScheduleModel.dur(n.s, n.e) : null;
+        }
+        descendants(id) {
+          const out = [];
+          const walk = pid =>
+            this.children(pid).forEach(c => {
+              out.push(c);
+              if (this.isGroup(c)) walk(c.id);
+            });
+          walk(id);
+          return out;
+        }
+        isInside(id, ancestorId) {
+          let cur = this.get(id);
+          const target = Number(ancestorId);
+          let guard = 0;
+          while (cur && cur.parent !== null && guard++ < 64) {
+            if (cur.parent === target) return true;
+            cur = this.get(cur.parent);
+          }
+          return false;
+        }
+        depth(n) {
+          let d = 0;
+          let cur = n;
+          while (cur && cur.parent !== null && d < 64) {
+            d++;
+            cur = this.get(cur.parent);
+          }
+          return d;
+        }
+        rootAncestor(n) {
+          let cur = n;
+          let guard = 0;
+          while (cur && cur.parent !== null && guard++ < 64) cur = this.get(cur.parent);
+          return cur;
+        }
+
+        // --- создание ----------------------------------------------------
+        createActivity(name, s, e) {
+          const title = String(name === null || name === undefined ? "" : name).trim();
+          if (!title) return { ok: false, error: "Название обязательно" };
+          if (e !== null && e !== undefined && (s === null || s === undefined)) {
+            return { ok: false, error: "Укажите время начала" };
+          }
+          const node = {
+            id: --this.tempSeq,
+            kind: "t",
+            name: title,
+            parent: null,
+            s: s === undefined ? null : s,
+            e: s === null || s === undefined || e === undefined ? null : e,
+            isNew: true,
+          };
+          this.nodes.set(node.id, node);
+          this.autoNest(node);
+          return { ok: true, node };
+        }
+        createGroup(name) {
+          const title = String(name === null || name === undefined ? "" : name).trim();
+          if (!title) return { ok: false, error: "Название обязательно" };
+          const node = {
+            id: --this.tempSeq,
+            kind: "f",
+            name: title,
+            parent: null,
+            s: null,
+            e: null,
+            isNew: true,
+          };
+          this.nodes.set(node.id, node);
+          return { ok: true, node };
+        }
+        rename(id, name) {
+          const n = this.get(id);
+          if (!n) return false;
+          n.name = String(name === null || name === undefined ? "" : name);
+          return true;
+        }
+
+        // --- время -------------------------------------------------------
+        /** Начало активности внутри интервала группы — активность в группе (8.3). */
+        autoNest(node) {
+          if (!node || node.kind !== "t" || node.s === null) return false;
+          let best = null;
+          let bestDepth = -1;
+          this.all().forEach(g => {
+            if (!this.isGroup(g) || g.id === node.id || !this.timed(g)) return;
+            const inside =
+              ScheduleModel.norm(node.s - g.s) < this.duration(g) - 1e-9;
+            if (!inside) return;
+            const d = this.depth(g);
+            if (d > bestDepth) {
+              best = g;
+              bestDepth = d;
+            }
+          });
+          if (best && node.parent !== best.id) {
+            node.parent = best.id;
+            return true;
+          }
+          return false;
+        }
+        /** Равнопропорциональное сжатие/расширение содержимого группы (9.4.2). */
+        scaleContent(group, old, neu) {
+          const SM = ScheduleModel;
+          const oldD = SM.dur(old.s, old.e);
+          const newD = SM.dur(neu.s, neu.e);
+          const k = newD / oldD;
+          const planned = this.descendants(group.id)
+            .filter(c => c.s !== null)
+            .map(c => {
+              const off = SM.norm(c.s - old.s);
+              const ns = Math.round(neu.s + off * k);
+              if (c.e === null) return { c, s: SM.norm(ns), e: null, len: Infinity };
+              const len = SM.dur(c.s, c.e);
+              const ne = Math.round(neu.s + (off + len) * k);
+              return { c, s: SM.norm(ns), e: SM.normEnd(ne), len: ne - ns };
+            });
+          if (planned.some(p => p.len < 1)) {
+            group.shrunk = true;
+            return false;
+          }
+          planned.forEach(p => {
+            p.c.s = p.s;
+            p.c.e = p.e;
+          });
+          group.shrunk = false;
+          return true;
+        }
+        /** Задать время элемента; e = null удаляет конец (4.7). */
+        setTime(id, s, e) {
+          const n = this.get(id);
+          if (!n) return false;
+          const start = s === undefined ? n.s : s;
+          let end = e === undefined ? n.e : e;
+          if (start === null) end = null;
+          const old = { s: n.s, e: n.e };
+          if (
+            this.isGroup(n) &&
+            old.s !== null &&
+            old.e !== null &&
+            start !== null &&
+            end !== null &&
+            this.children(n.id).length
+          ) {
+            // Если прошлое сжатие не применилось (9.4.7), содержимое всё ещё
+            // соответствует прежнему интервалу — масштабируем от него
+            this.scaleContent(n, n.baseRef || old, { s: start, e: end });
+            if (n.shrunk) n.baseRef = n.baseRef || old;
+            else delete n.baseRef;
+          } else if (this.isGroup(n)) {
+            n.shrunk = false;
+            delete n.baseRef;
+          }
+          n.s = start;
+          n.e = end;
+          if (n.kind === "t" && start !== null && start !== old.s) this.autoNest(n);
+          return true;
+        }
+        setStart(id, s) {
+          return this.setTime(id, s, s === null ? null : undefined);
+        }
+        setEnd(id, e) {
+          const n = this.get(id);
+          if (!n) return false;
+          if (n.s === null) return false;
+          return this.setTime(id, n.s, e);
+        }
+        /** Сдвинуть элемент и всё его содержимое, сохранив длительности. */
+        shift(n, delta) {
+          const SM = ScheduleModel;
+          [n, ...this.descendants(n.id)].forEach(x => {
+            if (x.s === null) return;
+            const d = x.e === null ? null : SM.dur(x.s, x.e);
+            x.s = SM.norm(x.s + delta);
+            if (d !== null) x.e = SM.normEnd(x.s + d);
+          });
+        }
+
+        // --- состав (раздел 9.5) -----------------------------------------
+        canMoveToGroup(id) {
+          const n = this.get(id);
+          if (!n) return false;
+          // у активности без временного диапазона кнопки нет (9.5.6)
+          return this.isGroup(n) || this.timed(n);
+        }
+        toGroup(id, groupId) {
+          const n = this.get(id);
+          const g = this.get(groupId);
+          if (!n || !g || !this.isGroup(g)) return { ok: false, error: "Выберите группу" };
+          if (n.id === g.id || this.isInside(g.id, n.id)) {
+            return { ok: false, error: "Нельзя поместить группу внутрь самой себя" };
+          }
+          if (!this.canMoveToGroup(id)) {
+            return { ok: false, error: "Сначала укажите временной диапазон активности" };
+          }
+          n.parent = g.id;
+          // 9.5.3: время начала совпадает со временем начала группы;
+          // если у группы времени нет — выравнивать нечего
+          if (g.s !== null && n.s !== null) {
+            this.shift(n, ScheduleModel.norm(g.s - n.s));
+          }
+          return { ok: true };
+        }
+        fromGroup(id) {
+          const n = this.get(id);
+          if (!n || n.parent === null) return { ok: false, error: "Сущность не в группе" };
+          const top = this.rootAncestor(n);
+          n.parent = null;
+          // 9.5.10: длительность сохраняется, начало = конец корневой группы
+          if (top && top.e !== null && n.s !== null) {
+            this.shift(n, ScheduleModel.norm(top.e - n.s));
+          }
+          return { ok: true };
+        }
+
+        // --- удаление (раздел 12) ----------------------------------------
+        remove(id) {
+          const n = this.get(id);
+          if (!n) return false;
+          const SM = ScheduleModel;
+          const before = this.analyze();
+          const parentId = n.parent;
+          const wasTimed = this.timed(n);
+          const subtree = [n, ...this.descendants(n.id)];
+          subtree.forEach(x => this.nodes.delete(x.id));
+          if (!wasTimed) return true;
+          const sibs = this.children(parentId).filter(x => this.timed(x));
+          if (!sibs.length) return true;
+          const par = parentId !== null ? this.get(parentId) : null;
+          const parTimed = Boolean(par) && this.timed(par);
+          const ref = par ? (par.s !== null ? par.s : 0) : before.ref;
+          const byTime = list =>
+            list.slice().sort((a, b) => SM.norm(a.s - ref) - SM.norm(b.s - ref));
+          // 12.3: единственный промежуток — соседний крайний элемент вытягивается
+          if (parentId === null && before.gapCount === 1) {
+            const hole = before.rootHoles[0];
+            const nEnd = SM.normEnd(n.s + SM.dur(n.s, n.e));
+            if (Math.abs(SM.norm(nEnd) - SM.norm(hole.from)) < 1e-9) {
+              const prev = byTime(sibs).pop();
+              this.setTime(prev.id, prev.s, nEnd);
+              return true;
+            }
+            if (Math.abs(SM.norm(n.s) - SM.norm(hole.to)) < 1e-9) {
+              const next = byTime(sibs)[0];
+              this.setTime(next.id, n.s, next.e);
+              return true;
+            }
+          }
+          // 12.1.2–12.1.3: освободившееся делится между оставшимися того же
+          // уровня пропорционально Целям (длительностям), порядок сохраняется
+          const ordered = byTime(sibs);
+          const total = ordered.reduce((sum, x) => sum + SM.dur(x.s, x.e), 0);
+          const span = parTimed ? SM.dur(par.s, par.e) : total + SM.dur(n.s, n.e);
+          const origin = parTimed ? par.s : byTime([n, ...sibs])[0].s;
+          let acc = 0;
+          const bounds = ordered.map(x => {
+            const from = Math.round(origin + (acc / total) * span);
+            acc += SM.dur(x.s, x.e);
+            const to = Math.round(origin + (acc / total) * span);
+            return { x, from, to: Math.max(to, from + 1) };
+          });
+          bounds.forEach(b => this.setTime(b.x.id, SM.norm(b.from), SM.normEnd(b.to)));
+          return true;
+        }
+
+        // --- анализ: подсветка и блокировки (раздел 9.3) -----------------
+        static arcOverlap(a, b) {
+          const SM = ScheduleModel;
+          return (
+            SM.norm(b.s - a.s) < a.d - 1e-9 || SM.norm(a.s - b.s) < b.d - 1e-9
+          );
+        }
+        /**
+         * Свободные участки внутри [spanStart, spanStart + spanLen) за
+         * вычетом занятых дуг. circular — корень: участки на стыке суток
+         * склеиваются в один промежуток.
+         */
+        static holes(arcs, spanStart, spanLen, circular) {
+          const SM = ScheduleModel;
+          const segs = [];
+          const push = (x, y) => {
+            const lo = Math.max(0, x);
+            const hi = Math.min(spanLen, y);
+            if (hi - lo > 1e-9) segs.push([lo, hi]);
+          };
+          arcs.forEach(a => {
+            const o = SM.norm(a.s - spanStart);
+            push(o, o + a.d);
+            if (o + a.d > 1440) push(0, o + a.d - 1440);
+          });
+          segs.sort((p, q) => p[0] - q[0]);
+          const holes = [];
+          let cur = 0;
+          segs.forEach(([lo, hi]) => {
+            if (lo > cur + 1e-9) holes.push([cur, lo]);
+            cur = Math.max(cur, hi);
+          });
+          if (cur < spanLen - 1e-9) holes.push([cur, spanLen]);
+          if (
+            circular &&
+            holes.length > 1 &&
+            holes[0][0] <= 1e-9 &&
+            holes[holes.length - 1][1] >= spanLen - 1e-9
+          ) {
+            const last = holes.pop();
+            holes[0] = [last[0] - spanLen, holes[0][1]];
+          }
+          return holes.map(([lo, hi]) => ({
+            from: SM.norm(spanStart + lo),
+            to: SM.norm(spanStart + hi),
+            len: hi - lo,
+          }));
+        }
+        bounders(hole, nodes) {
+          const SM = ScheduleModel;
+          const out = [];
+          nodes.forEach(n => {
+            const end = SM.norm(n.s + SM.dur(n.s, n.e));
+            if (Math.abs(end - SM.norm(hole.from)) < 1e-9) out.push(n.id);
+            if (Math.abs(SM.norm(n.s) - SM.norm(hole.to)) < 1e-9) out.push(n.id);
+          });
+          return out;
+        }
+        analyze() {
+          const SM = ScheduleModel;
+          const red = new Set();
+          const blue = new Set();
+          const errors = [];
+          const label = n => `«${n.name || "без названия"}»`;
+          const err = (code, ids, text) => {
+            errors.push({ code, ids, text });
+            ids.forEach(i => red.add(i));
+          };
+          const arc = n => ({ s: n.s, d: this.duration(n) });
+          const containers = [null, ...this.all().filter(n => this.isGroup(n)).map(g => g.id)];
+          containers.forEach(cid => {
+            const sibs = this.children(cid).filter(n => this.timed(n));
+            for (let i = 0; i < sibs.length; i++) {
+              for (let j = i + 1; j < sibs.length; j++) {
+                if (DayDraft.arcOverlap(arc(sibs[i]), arc(sibs[j]))) {
+                  err("overlap", [sibs[i].id, sibs[j].id],
+                    `Интервалы ${label(sibs[i])} и ${label(sibs[j])} пересекаются`);
+                }
+              }
+            }
+          });
+          this.all().forEach(c => {
+            if (c.parent === null || !this.timed(c)) return;
+            const p = this.get(c.parent);
+            if (!p || !this.timed(p)) return;
+            const inside =
+              SM.norm(c.s - p.s) + this.duration(c) <= this.duration(p) + 1e-9;
+            if (!inside) {
+              err("outside", [c.id],
+                `Время ${label(c)} не попадает в интервал группы ${label(p)}`);
+            }
+          });
+          this.all().filter(n => this.isGroup(n)).forEach(g => {
+            const kids = this.children(g.id);
+            if (kids.length) {
+              if (!this.timed(g)) {
+                // 9.4.12: блокирует группа без времени с ВРЕМЕННЫМ содержимым;
+                // состоящая из одних элементов без времени (например, после
+                // обнуления Целей на основном экране) — допустима (9.4.10)
+                if (this.descendants(g.id).some(c => this.timed(c))) {
+                  err("group-no-time", [g.id],
+                    `У группы ${label(g)} есть содержимое, но не задан временной диапазон`);
+                }
+              } else {
+                const timedKids = kids.filter(k => this.timed(k));
+                const holes = DayDraft.holes(timedKids.map(arc), g.s, this.duration(g), false);
+                if (holes.length) {
+                  const ids = [g.id];
+                  holes.forEach(h => ids.push(...this.bounders(h, timedKids)));
+                  err("group-free", ids,
+                    `Внутри группы ${label(g)} есть свободное время`);
+                }
+                if (g.shrunk) {
+                  err("group-short", [g.id],
+                    `Группа ${label(g)} слишком короткая: содержимое не помещается (минимум минута на элемент)`);
+                }
+              }
+            } else if (this.timed(g)) {
+              err("group-empty", [g.id],
+                `Группа ${label(g)} без содержимого не может занимать время — заполните её, удалите или уберите конец`);
+            }
+          });
+          const rootTimed = this.children(null).filter(n => this.timed(n));
+          const rootHoles = rootTimed.length
+            ? DayDraft.holes(rootTimed.map(arc), 0, 1440, true)
+            : [];
+          if (rootHoles.length > 1) {
+            const ids = [];
+            rootHoles.forEach(h => ids.push(...this.bounders(h, rootTimed)));
+            err("gaps", ids, "В расписании больше одного промежутка");
+          } else if (rootHoles.length === 1) {
+            this.bounders(rootHoles[0], rootTimed).forEach(i => blue.add(i));
+          }
+          let ref = 0;
+          if (rootHoles.length === 1) ref = rootHoles[0].to;
+          else if (rootHoles.length === 0 && rootTimed.length && this.saved) ref = this.S;
+          return {
+            red,
+            blue,
+            errors,
+            canSave: errors.length === 0,
+            rootHoles,
+            gapCount: rootHoles.length,
+            ref,
+          };
+        }
+
+        // --- порядок отображения (8.1, 9.6) --------------------------------
+        sortedChildren(parentId, ref) {
+          const SM = ScheduleModel;
+          const list = this.children(parentId);
+          const base = parentId === null ? ref : this.get(parentId).s || 0;
+          const byName = (a, b) => String(a.name).localeCompare(String(b.name), "ru");
+          const withStart = list
+            .filter(n => n.s !== null)
+            .sort((a, b) => SM.norm(a.s - base) - SM.norm(b.s - base) || byName(a, b));
+          const empties = list
+            .filter(n => n.s === null)
+            .sort((a, b) =>
+              a.kind === b.kind ? byName(a, b) : a.kind === "f" ? -1 : 1
+            );
+          return { withStart, empties };
+        }
+        /** Строки окна: [{ node, depth, section: "main"|"empty" }]. */
+        rows(analysis) {
+          const a = analysis || this.analyze();
+          const out = [];
+          const emit = (n, depth, section) => {
+            out.push({ node: n, depth, section });
+            if (this.isGroup(n)) {
+              const sub = this.sortedChildren(n.id, a.ref);
+              sub.withStart.concat(sub.empties).forEach(c => emit(c, depth + 1, section));
+            }
+          };
+          const top = this.sortedChildren(null, a.ref);
+          top.withStart.forEach(n => emit(n, 0, "main"));
+          top.empties.forEach(n => emit(n, 0, "empty"));
+          return out;
+        }
+
+        // --- план сохранения (раздел 10) -----------------------------------
+        plan() {
+          const SM = ScheduleModel;
+          const a = this.analyze();
+          if (!a.canSave) return { ok: false, errors: a.errors };
+          const rootTimed = this.children(null).filter(n => this.timed(n));
+          let S = SM.norm(this.S);
+          let E = SM.norm(this.E);
+          let ref = 0;
+          if (rootTimed.length) {
+            if (a.gapCount === 1) {
+              S = SM.norm(a.rootHoles[0].to);
+              E = SM.norm(a.rootHoles[0].from);
+              ref = S;
+            } else {
+              // Промежутка нет: «Конец» привязывается к ближайшему концу
+              // активности, «Начало» совпадает с ним (10.2.2, 5.8, 5.11)
+              let best = null;
+              let bestDist = Infinity;
+              rootTimed
+                .slice()
+                .sort((p, q) => SM.norm(p.s - a.ref) - SM.norm(q.s - a.ref))
+                .forEach(n => {
+                  const end = SM.norm(n.s + this.duration(n));
+                  const dist = SM.circ(end, this.E);
+                  if (dist < bestDist - 1e-9) {
+                    bestDist = dist;
+                    best = end;
+                  }
+                });
+              S = best;
+              E = best;
+              ref = best;
+            }
+          }
+          const total = rootTimed.reduce((sum, n) => sum + this.duration(n), 0);
+          const targets = new Map();
+          this.all()
+            .filter(n => n.kind === "t")
+            .forEach(n => {
+              targets.set(
+                n.id,
+                this.timed(n) && total > 0 ? this.duration(n) / total : 0
+              );
+            });
+          const sortBy = (list, base) =>
+            list
+              .slice()
+              .sort((p, q) => SM.norm(p.s - base) - SM.norm(q.s - base))
+              .map(n => n.id);
+          const order = { root: sortBy(rootTimed, ref), folders: {} };
+          this.all()
+            .filter(n => this.isGroup(n))
+            .forEach(g => {
+              if (!this.timed(g)) return;
+              order.folders[g.id] = sortBy(
+                this.children(g.id).filter(k => this.timed(k)),
+                g.s
+              );
+            });
+          const startOnly = {};
+          this.all().forEach(n => {
+            if (n.s !== null && n.e === null) startOnly[n.id] = n.s;
+          });
+          return { ok: true, S, E, targets, order, startOnly, hasTime: rootTimed.length > 0 };
+        }
+
+        /** Перенести черновик на основной экран (кнопка «Сохранить»). */
+        commit() {
+          const plan = this.plan();
+          if (!plan.ok) return plan;
+          const idMap = new Map();
+          const keep = new Set();
+          const list = this.all().sort((a, b) => this.depth(a) - this.depth(b));
+          const attach = (node, parentRealId) => {
+            const target =
+              parentRealId === null ? TreeModel.root() : TreeModel.childrenOf(parentRealId);
+            if (target) target.push(node);
+          };
+          const renames = [];
+          list.forEach(n => {
+            const loc = n.isNew ? null : TreeModel.findNode(n.id);
+            const wantParent = n.parent === null ? null : idMap.get(n.parent);
+            if (loc && TreeModel.isFolder(loc.node) === (n.kind === "f")) {
+              const real = Number(loc.node.id);
+              idMap.set(n.id, real);
+              keep.add(real);
+              const cur = loc.parent ? Number(loc.parent.id) : null;
+              if (cur !== (wantParent === undefined ? null : wantParent)) {
+                loc.siblings.splice(loc.index, 1);
+                attach(loc.node, wantParent === undefined ? null : wantParent);
+              }
+              renames.push([real, n.kind, n.name]);
+              return;
+            }
+            // новый узел (или исчезнувший с основного экрана) — создаём
+            if (n.kind === "f") {
+              const folder = TreeModel.createFolderNode(n.name);
+              attach(folder, wantParent === undefined ? null : wantParent);
+              idMap.set(n.id, Number(folder.id));
+              keep.add(Number(folder.id));
+            } else {
+              const timer = TimerModel.createTimer();
+              timer.name = n.name;
+              timer.targetProportion = 0;
+              timer.proportion = 0;
+              timer.recommendedProportion = 0;
+              attach(
+                TreeModel.createTimerNode(timer.id),
+                wantParent === undefined ? null : wantParent
+              );
+              idMap.set(n.id, Number(timer.id));
+              keep.add(Number(timer.id));
+              AppState.addTimer(timer);
+            }
+          });
+          // удаление: всё, чего нет в черновике (последнее слово — за нажавшим
+          // «Сохранить», 11.4.3; удаление группы — вместе с содержимым, 7.3.9)
+          const doomed = TreeModel.flatten().filter(x => !keep.has(x.id));
+          const doomedIds = new Set(doomed.map(x => x.id));
+          doomed.forEach(x => {
+            if (x.parent && doomedIds.has(Number(x.parent.id))) return;
+            const loc = TreeModel.findNode(x.id);
+            if (loc) loc.siblings.splice(loc.index, 1);
+          });
+          doomed.forEach(x => {
+            if (x.kind === "timer") {
+              AppState.removeTimer(x.id);
+              TimerView.forgetCompactState(x.id);
+            } else {
+              FolderView.forget(x.id);
+            }
+          });
+          // имена
+          renames.forEach(([real, kind, name]) => {
+            if (kind === "f") {
+              const loc = TreeModel.findNode(real);
+              if (loc) loc.node.name = name;
+            } else {
+              const timer = AppState.findTimerById(real);
+              if (timer) timer.name = name;
+              const card = AppState.getTimerElement(real);
+              const input = card && card.querySelector('input[data-action="name"]');
+              if (input) input.value = name;
+            }
+          });
+          // Цели (10.2.3) и Вес (10.2.4: сохраняется сумма весов, как это
+          // делает правка Цели на основном экране)
+          const timers = AppState.getTimers();
+          const weightSum = timers.reduce((s, t) => s + (Number(t.proportion) || 0), 0);
+          const W = weightSum > 0 ? weightSum : 1;
+          let targetSum = 0;
+          const realTargets = new Map();
+          plan.targets.forEach((v, draftId) => {
+            realTargets.set(idMap.get(draftId), v);
+            targetSum += v;
+          });
+          timers.forEach(t => {
+            const v = realTargets.get(Number(t.id));
+            if (v === undefined) return;
+            t.targetProportion = v;
+            if (targetSum > 0) t.proportion = v * W;
+          });
+          TreeModel.changed();
+          // расписание
+          const sched = AppState.getSchedule();
+          const mapIds = ids => ids.map(i => idMap.get(i)).filter(i => i !== undefined);
+          sched.saved = true;
+          if (plan.hasTime) {
+            sched.start = plan.S;
+            sched.end = plan.E;
+          }
+          sched.order = { root: mapIds(plan.order.root), folders: {} };
+          Object.keys(plan.order.folders).forEach(k => {
+            const real = idMap.get(Number(k));
+            if (real !== undefined) sched.order.folders[String(real)] = mapIds(plan.order.folders[k]);
+          });
+          sched.startOnly = {};
+          Object.keys(plan.startOnly).forEach(k => {
+            const real = idMap.get(Number(k));
+            if (real !== undefined) sched.startOnly[String(real)] = plan.startOnly[k];
+          });
+          ScheduleModel.reconcile();
+          if (plan.hasTime && ScheduleModel.endMinutes() !== plan.E) {
+            ScheduleModel.writeEndField(plan.E);
+          }
+          ScheduleModel.renderStartField();
+          TimerView.renderTree();
+          TimerView.syncAllProportionInputs();
+          if (AppState.getGlobalEndTime()) {
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          }
+          CalculationService.updateCalculations();
+          AppController.calculateRecommendations();
+          AppState.notify("displayNeedsUpdate");
+          StorageService.saveTimersToLocalStorage();
+          CloudSync.bumpControl();
+          return { ok: true, plan };
+        }
+      }
+
+      // ============================================================
+      //  Окно «Конструктор дня» (раздел 7): модальное поверх основного
+      //  экрана, пока открыто — основной экран данного устройства
+      //  не редактируется (11.4).
+      // ============================================================
+      class DayBuilder {
+        static draft = null;
+        static mode = "list";
+        static pickFor = null;
+        static messages = [];
+
+        static isActive() {
+          return (
+            Boolean(this.draft) &&
+            Boolean(ModalController.context) &&
+            ModalController.context.type === "day"
+          );
+        }
+        static isOpen() {
+          return this.isActive() && ModalController.isOpen();
+        }
+        static open() {
+          ScheduleModel.syncFromFields();
+          this.draft = DayDraft.fromMain();
+          this.mode = "list";
+          this.messages = [];
+          ModalController.context = { type: "day" };
+          this.render();
+          ModalController.context = { type: "day" };
+          ModalController.open();
+          const box = ModalController.box();
+          if (box) box.classList.add("day-builder");
+        }
+        static close() {
+          this.draft = null;
+          this.mode = "list";
+          this.pickFor = null;
+          this.messages = [];
+          const box = ModalController.box();
+          if (box) box.classList.remove("day-builder");
+          ModalController.close();
+        }
+        static setMessages(lines) {
+          this.messages = lines || [];
+          const el = document.getElementById("modalError");
+          if (el) el.textContent = this.messages.join("\n");
+        }
+        static el(tag, attrs, text) {
+          return ModalController.el(tag, attrs || {}, text);
+        }
+        static timeInput(cls, value, field, id, placeholder) {
+          return this.el("input", {
+            type: "text",
+            class: `dd-time ${cls}`,
+            value,
+            placeholder,
+            size: "5",
+            "data-dd-field": field,
+            "data-dd-id": String(id),
+          });
+        }
+        static button(text, action, id, extra) {
+          const attrs = { "data-dd-action": action, ...(extra || {}) };
+          if (id !== undefined && id !== null) attrs["data-dd-id"] = String(id);
+          return this.el("button", attrs, text);
+        }
+        static render() {
+          const box = ModalController.box();
+          if (!box || !this.draft) return;
+          box.innerHTML = "";
+          if (this.mode === "create-activity") return this.renderCreateActivity(box);
+          if (this.mode === "create-group") return this.renderCreateGroup(box);
+          if (this.mode === "pick-group") return this.renderPickGroup(box);
+          return this.renderList(box);
+        }
+        static renderList(box) {
+          const draft = this.draft;
+          const analysis = draft.analyze();
+          box.appendChild(this.el("div", { class: "modal-title" }, "Конструктор дня"));
+          const bar = this.el("div", { class: "modal-row dd-toolbar" });
+          bar.appendChild(this.button("Создать группу", "new-group"));
+          bar.appendChild(this.button("Создать активность", "new-activity"));
+          box.appendChild(bar);
+          const list = this.el("div", { id: "ddList", class: "dd-list" });
+          const rows = draft.rows(analysis);
+          let emptyShown = false;
+          rows.forEach(row => {
+            if (row.section === "empty" && !emptyShown) {
+              emptyShown = true;
+              list.appendChild(this.el("div", { class: "dd-section", id: "ddEmptyTitle" }, "Пустое"));
+            }
+            list.appendChild(this.renderRow(row, analysis));
+          });
+          if (!rows.length) {
+            list.appendChild(this.el("div", { class: "modal-hint" }, "Пока нет ни активностей, ни групп."));
+          }
+          box.appendChild(list);
+          const err = this.el("div", { class: "modal-error dd-errors", id: "modalError" });
+          err.textContent = this.messages.join("\n");
+          box.appendChild(err);
+          const foot = this.el("div", { class: "modal-row" });
+          foot.appendChild(this.button("Сохранить", "save", null, { id: "ddSave" }));
+          foot.appendChild(this.button("Закрыть", "close", null, { id: "ddClose" }));
+          box.appendChild(foot);
+        }
+        static renderRow(row, analysis) {
+          const draft = this.draft;
+          const n = row.node;
+          const SM = ScheduleModel;
+          const isGroup = draft.isGroup(n);
+          const cls = ["dd-row", isGroup ? "dd-group" : "dd-activity"];
+          if (analysis.red.has(n.id)) cls.push("dd-red");
+          else if (analysis.blue.has(n.id)) cls.push("dd-blue");
+          const el = this.el("div", {
+            class: cls.join(" "),
+            "data-dd-id": String(n.id),
+            "data-depth": String(row.depth),
+            style: `margin-left:${row.depth * 22}px`,
+          });
+          const kind =
+            isGroup ? "Группа конструктора" : n.s === null && n.e === null ? "Активность без времени" : "Активность";
+          el.appendChild(this.el("span", { class: "dd-kind" }, kind));
+          el.appendChild(
+            this.el("input", {
+              type: "text",
+              class: "dd-name",
+              value: n.name,
+              placeholder: "Название",
+              "data-dd-field": "name",
+              "data-dd-id": String(n.id),
+            })
+          );
+          el.appendChild(this.el("label", {}, "Начало"));
+          el.appendChild(
+            this.timeInput("dd-start", n.s === null ? "" : SM.fmtStart(n.s), "start", n.id, "чч:мм")
+          );
+          el.appendChild(this.el("label", {}, "Конец"));
+          el.appendChild(
+            this.timeInput("dd-end", n.e === null ? "" : SM.fmtEnd(n.e), "end", n.id, "чч:мм")
+          );
+          el.appendChild(
+            this.button("🗑", "clear-end", n.id, { class: "dd-trash", title: "Удалить конец" })
+          );
+          el.appendChild(
+            this.el(
+              "span",
+              { class: "dd-duration" },
+              `Длительность: ${SM.fmtDur(draft.duration(n))}`
+            )
+          );
+          if (draft.canMoveToGroup(n.id)) {
+            el.appendChild(this.button("В группу", "to-group", n.id));
+          }
+          if (n.parent !== null) {
+            el.appendChild(this.button("Из группы", "from-group", n.id));
+          }
+          el.appendChild(this.button("Удалить", "delete", n.id));
+          return el;
+        }
+        static renderCreateActivity(box) {
+          box.appendChild(this.el("div", { class: "modal-title" }, "Создать активность"));
+          const r1 = this.el("div", { class: "modal-row" });
+          r1.appendChild(this.el("label", { for: "ddNewName" }, "Название:"));
+          r1.appendChild(this.el("input", { type: "text", id: "ddNewName", placeholder: "Название активности" }));
+          box.appendChild(r1);
+          const r2 = this.el("div", { class: "modal-row" });
+          r2.appendChild(this.el("label", {}, "Время:"));
+          r2.appendChild(this.el("input", { type: "text", id: "ddNewStart", placeholder: "начало чч:мм", size: "8" }));
+          r2.appendChild(this.el("span", {}, "—"));
+          r2.appendChild(this.el("input", { type: "text", id: "ddNewEnd", placeholder: "конец чч:мм", size: "8" }));
+          box.appendChild(r2);
+          box.appendChild(
+            this.el("div", { class: "modal-hint" }, "Время не обязательно: активность без времени попадёт в раздел «Пустое».")
+          );
+          box.appendChild(this.el("div", { class: "modal-error", id: "modalError" }));
+          const foot = this.el("div", { class: "modal-row" });
+          foot.appendChild(this.button("Создать", "create-activity-confirm", null, { id: "ddCreateConfirm" }));
+          foot.appendChild(this.button("Отмена", "back", null, { id: "ddBack" }));
+          box.appendChild(foot);
+        }
+        static renderCreateGroup(box) {
+          box.appendChild(this.el("div", { class: "modal-title" }, "Создать группу"));
+          const r1 = this.el("div", { class: "modal-row" });
+          r1.appendChild(this.el("label", { for: "ddNewName" }, "Название:"));
+          r1.appendChild(this.el("input", { type: "text", id: "ddNewName", placeholder: "Название группы" }));
+          box.appendChild(r1);
+          box.appendChild(this.el("div", { class: "modal-error", id: "modalError" }));
+          const foot = this.el("div", { class: "modal-row" });
+          foot.appendChild(this.button("Создать", "create-group-confirm", null, { id: "ddCreateConfirm" }));
+          foot.appendChild(this.button("Отмена", "back", null, { id: "ddBack" }));
+          box.appendChild(foot);
+        }
+        static renderPickGroup(box) {
+          const draft = this.draft;
+          const n = draft.get(this.pickFor);
+          box.appendChild(
+            this.el("div", { class: "modal-title" }, `В группу: «${n ? n.name : ""}»`)
+          );
+          const list = this.el("div", { id: "ddPickList" });
+          const analysis = draft.analyze();
+          const groups = draft
+            .rows(analysis)
+            .filter(
+              r =>
+                draft.isGroup(r.node) &&
+                r.node.id !== this.pickFor &&
+                !draft.isInside(r.node.id, this.pickFor)
+            );
+          groups.forEach(r => {
+            const item = this.el("label", {
+              class: "group-select-item",
+              style: `margin-left:${r.depth * 22}px`,
+            });
+            item.appendChild(
+              this.el("input", { type: "checkbox", class: "dd-pick", "data-dd-id": String(r.node.id) })
+            );
+            item.appendChild(document.createTextNode(` ${r.node.name || "(без названия)"}`));
+            list.appendChild(item);
+          });
+          if (!groups.length) {
+            list.appendChild(this.el("div", { class: "modal-hint" }, "Групп нет — сначала создайте группу."));
+          }
+          box.appendChild(list);
+          box.appendChild(this.el("div", { class: "modal-error", id: "modalError" }));
+          const foot = this.el("div", { class: "modal-row" });
+          foot.appendChild(this.button("Выбрать", "pick-confirm", null, { id: "ddPickConfirm" }));
+          foot.appendChild(this.button("Отмена", "back", null, { id: "ddBack" }));
+          box.appendChild(foot);
+        }
+
+        // --- клики ------------------------------------------------------
+        static handleClick(target) {
+          if (!this.draft) return;
+          const action = target.getAttribute("data-dd-action");
+          const idAttr = target.getAttribute("data-dd-id");
+          const id = idAttr === null ? null : Number(idAttr);
+          const draft = this.draft;
+          const fail = text => this.setMessages([text]);
+          if (action === "close") return this.close();
+          if (action === "save") return this.save();
+          if (action === "back") {
+            this.mode = "list";
+            this.pickFor = null;
+            return this.render();
+          }
+          if (action === "new-group") {
+            this.mode = "create-group";
+            return this.render();
+          }
+          if (action === "new-activity") {
+            this.mode = "create-activity";
+            return this.render();
+          }
+          if (action === "create-group-confirm") {
+            const res = draft.createGroup(document.getElementById("ddNewName").value);
+            if (!res.ok) return this.setMessages([res.error]);
+            this.mode = "list";
+            this.messages = [];
+            return this.render();
+          }
+          if (action === "create-activity-confirm") {
+            const name = document.getElementById("ddNewName").value;
+            const sText = document.getElementById("ddNewStart").value.trim();
+            const eText = document.getElementById("ddNewEnd").value.trim();
+            const s = sText === "" ? null : ScheduleModel.parseStart(sText);
+            const e = eText === "" ? null : ScheduleModel.parseEnd(eText);
+            if ((sText !== "" && s === null) || (eText !== "" && e === null)) {
+              return this.setMessages(["Время указывается как чч:мм (конец — до 24:00)"]);
+            }
+            const res = draft.createActivity(name, s, e);
+            if (!res.ok) return this.setMessages([res.error]);
+            this.mode = "list";
+            this.messages = [];
+            return this.render();
+          }
+          if (action === "to-group") {
+            this.mode = "pick-group";
+            this.pickFor = id;
+            return this.render();
+          }
+          if (action === "pick-confirm") {
+            const boxes = Array.from(document.querySelectorAll(".dd-pick:checked"));
+            if (boxes.length !== 1) {
+              return fail("Отметьте ровно одну группу");
+            }
+            const res = draft.toGroup(this.pickFor, Number(boxes[0].getAttribute("data-dd-id")));
+            if (!res.ok) return fail(res.error);
+            this.mode = "list";
+            this.pickFor = null;
+            this.messages = [];
+            return this.render();
+          }
+          if (action === "from-group") {
+            draft.fromGroup(id);
+            this.messages = [];
+            return this.render();
+          }
+          if (action === "delete") {
+            draft.remove(id);
+            this.messages = [];
+            return this.render();
+          }
+          if (action === "clear-end") {
+            draft.setEnd(id, null);
+            this.messages = [];
+            return this.render();
+          }
+        }
+        /** Изменение поля (change): применить к черновику и перерисовать. */
+        static handleChange(target) {
+          if (!this.draft || this.mode !== "list") return;
+          const field = target.getAttribute("data-dd-field");
+          if (!field) return;
+          const id = Number(target.getAttribute("data-dd-id"));
+          const draft = this.draft;
+          if (field === "name") {
+            draft.rename(id, target.value);
+            this.messages = [];
+            return this.render();
+          }
+          const op = this.timeOp(draft, id, field, target.value);
+          if (!op.ok) {
+            this.setMessages([op.error]);
+            return this.render();
+          }
+          this.messages = [];
+          this.render();
+        }
+        /** Применить правку времени к переданному черновику. */
+        static timeOp(draft, id, field, text) {
+          const SM = ScheduleModel;
+          const t = String(text).trim();
+          if (field === "start") {
+            if (t === "") {
+              draft.setStart(id, null);
+              return { ok: true };
+            }
+            const s = SM.parseStart(t);
+            if (s === null) return { ok: false, error: "Время начала указывается как чч:мм" };
+            draft.setStart(id, s);
+            return { ok: true };
+          }
+          if (t === "") {
+            draft.setEnd(id, null);
+            return { ok: true };
+          }
+          const e = SM.parseEnd(t);
+          if (e === null) return { ok: false, error: "Время конца указывается как чч:мм (до 24:00)" };
+          if (!draft.setEnd(id, e)) return { ok: false, error: "Сначала укажите время начала" };
+          return { ok: true };
+        }
+        /** Набор текста (input): подсветка конфликтов сразу, без перерисовки (9.3.2). */
+        static handleInput(target) {
+          if (!this.draft || this.mode !== "list") return;
+          const field = target.getAttribute("data-dd-field");
+          if (field !== "start" && field !== "end") return;
+          const id = Number(target.getAttribute("data-dd-id"));
+          const preview = this.draft.clone();
+          const op = this.timeOp(preview, id, field, target.value);
+          if (!op.ok) return;
+          this.paint(preview.analyze());
+        }
+        static paint(analysis) {
+          document.querySelectorAll("#ddList .dd-row").forEach(row => {
+            const id = Number(row.getAttribute("data-dd-id"));
+            row.classList.toggle("dd-red", analysis.red.has(id));
+            row.classList.toggle("dd-blue", !analysis.red.has(id) && analysis.blue.has(id));
+          });
+        }
+        static save() {
+          if (!this.draft) return null;
+          const result = this.draft.commit();
+          if (!result.ok) {
+            this.setMessages(result.errors.map(e => e.text));
+            return result;
+          }
+          this.close();
+          return result;
+        }
+      }
+
       class MenuController {
         // Выпадающее меню «Операции» (кнопка справа наверху)
         static toggle() {
@@ -4629,6 +6188,13 @@
         }
         static handleOverlayClick(event) {
           const target = event.target;
+          // «Конструктор дня»: клик мимо окна его не закрывает (правки пропали бы)
+          if (DayBuilder.isActive()) {
+            if (target.getAttribute && target.getAttribute("data-dd-action")) {
+              DayBuilder.handleClick(target);
+            }
+            return;
+          }
           if (target === ModalController.overlay()) {
             ModalController.close();
             return;
@@ -5188,6 +6754,8 @@
           // быть идентичен на всех устройствах (ТЗ 10.1), поэтому ключ
           // синхронизируется целиком и участвует в сравнении снимков.
           "tree",
+          // Расписание «Конструктора дня» синхронизируется вместе с остальным (6.3)
+          "schedule",
         ];
         static ABANDON_MS = 150000;
         static clockSkewMs = 0;
@@ -5361,6 +6929,7 @@
             // разъезжаться по устройствам (ТЗ 10.1). Таймеры выше сортируются,
             // поэтому раньше порядок в проекцию не попадал.
             (snapshot && snapshot.tree) || "",
+            (snapshot && snapshot.schedule) || "",
             (snapshot && snapshot.globalEndTimeValue) || "",
             (snapshot && snapshot.lastSessionEndTime) || "",
             (snapshot && snapshot.controlSeq) || "0",

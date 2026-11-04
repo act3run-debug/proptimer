@@ -73,6 +73,8 @@ function collectGlobals() {
     "CloudController",
     "CloudSync",
     "CreateGroupController",
+    "DayBuilder",
+    "DayDraft",
     "EventService",
     "FolderView",
     "GroupTaskController",
@@ -82,6 +84,7 @@ function collectGlobals() {
     "NotificationService",
     "PriorityCalculator",
     "ProportionCalculator",
+    "ScheduleModel",
     "SessionManager",
     "SplitController",
     "StorageService",
@@ -263,6 +266,16 @@ function createContext(opts = {}) {
       app.AppState.timers = [];
       // Дерево (папки и порядок) — часть состояния приложения
       app.AppState.tree = [];
+      // Расписание «Конструктора дня» — тоже состояние приложения
+      app.AppState.schedule = null;
+      if (app.DayBuilder) {
+        app.DayBuilder.draft = null;
+        app.DayBuilder.mode = "list";
+      }
+      const startField = window.document.getElementById("scheduleStart");
+      if (startField) startField.value = "00:00";
+      const endField = window.document.getElementById("globalEndTime");
+      if (endField) endField.value = "";
       if (app.FolderView && app.FolderView.collapsedFolders) {
         app.FolderView.collapsedFolders.clear();
       }

@@ -211,3 +211,89 @@ test("ручное обнуление «Факта» (нули + «Примен�
   assert.ok(Math.abs(shown[1] - fresh[1][1]) < 1e-6);
   ctx.close();
 });
+// =====================================================================
+//  Любое количество таймеров (а не только два)
+// =====================================================================
+
+/** N таймеров с разными Целями (сумма 1) и «Концом» через 2 часа. */
+function manyScene(n) {
+  const ctx = setup();
+  const raw = Array.from({ length: n }, (_, i) => i + 1);
+  const sum = raw.reduce((s, x) => s + x, 0);
+  const timers = raw.map(x =>
+    ctx.addTimer({ name: `T${x}`, proportion: x / sum, targetProportion: x / sum })
+  );
+  ctx.setEndTime(DEFAULT_END);
+  ctx.recomputePlans();
+  ctx.AppState.setLastUpdateTime(new Date(ctx.clock.now));
+  return { ctx, timers };
+}
+const shownAll = (ctx, timers) => timers.map(t => recText(ctx, t));
+
+for (const n of [1, 3, 5, 8, 13]) {
+  test(`баг (${n} таймеров): «Факт» вручную на всех, «Сброс» каждого по очереди — рекомендации всех актуальны`, () => {
+    const { ctx, timers } = manyScene(n);
+    timers.forEach((t, i) => enterFact(ctx, t, (5 + 7 * i) * MIN));
+    timers.forEach((t, i) => {
+      const stale = shownAll(ctx, timers);
+      clickReset(ctx, t);
+      assert.equal(t.trackedSeconds, 0, `T${i + 1}: «Факт» обнулён`);
+      const shown = shownAll(ctx, timers);
+      const fresh = freshRecommendations(ctx).map(x => x[1]);
+      shown.forEach((value, j) =>
+        assert.ok(
+          Math.abs(value - fresh[j]) < 1e-6,
+          `после сброса T${i + 1}: T${j + 1} показывает ${value}, верно ${fresh[j]}`
+        )
+      );
+      if (n > 1 && i < n - 1) {
+        assert.notDeepEqual(shown, stale, "хоть что-то изменилось");
+      }
+    });
+    ctx.close();
+  });
+}
+
+for (const n of [3, 6, 10]) {
+  test(`баг (${n} таймеров): «Сброс» только части таймеров пересчитывает рекомендации у всех, в т.ч. нетронутых`, () => {
+    const { ctx, timers } = manyScene(n);
+    timers.forEach((t, i) => enterFact(ctx, t, (10 + 3 * i) * MIN));
+    const untouched = timers[n - 1];
+    const before = recText(ctx, untouched);
+    clickReset(ctx, timers[0]);
+    clickReset(ctx, timers[1]);
+    assert.notEqual(recText(ctx, untouched), before, "нетронутый таймер тоже обновился");
+    const shown = shownAll(ctx, timers);
+    const fresh = freshRecommendations(ctx).map(x => x[1]);
+    shown.forEach((value, j) => assert.ok(Math.abs(value - fresh[j]) < 1e-6, `T${j + 1}`));
+    ctx.close();
+  });
+
+  test(`баг (${n} таймеров): сброс всех возвращает рекомендации к исходным`, () => {
+    const { ctx, timers } = manyScene(n);
+    ctx.AppController.calculateRecommendations();
+    const start = shownAll(ctx, timers);
+    timers.forEach((t, i) => enterFact(ctx, t, (3 + 4 * i) * MIN));
+    timers.forEach(t => clickReset(ctx, t));
+    shownAll(ctx, timers).forEach((value, j) =>
+      assert.ok(Math.abs(value - start[j]) < 1e-6, `T${j + 1}: ${value} vs ${start[j]}`)
+    );
+    ctx.close();
+  });
+}
+
+test("баг: «Сброс» при группах и вложенности (много таймеров) тоже пересчитывает рекомендации", () => {
+  const { ctx, timers } = manyScene(6);
+  const f1 = ctx.addFolder("Г1");
+  const f2 = ctx.TreeModel.createFolder("Г2", f1);
+  ctx.TimerView.renderTree();
+  ctx.moveToFolder(timers[0].id, f1.id);
+  ctx.moveToFolder(timers[1].id, f2.id);
+  ctx.moveToFolder(timers[2].id, f2.id);
+  timers.forEach((t, i) => enterFact(ctx, t, (4 + 6 * i) * MIN));
+  clickReset(ctx, timers[1]);
+  const shown = shownAll(ctx, timers);
+  const fresh = freshRecommendations(ctx).map(x => x[1]);
+  shown.forEach((value, j) => assert.ok(Math.abs(value - fresh[j]) < 1e-6, `T${j + 1}`));
+  ctx.close();
+});
