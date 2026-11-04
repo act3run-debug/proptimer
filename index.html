@@ -16,12 +16,6 @@
       }
       body {
         background-color: #0a1530;
-        background-image: radial-gradient(
-          ellipse at 50% -10%,
-          #1c3672 0%,
-          rgba(10, 21, 48, 0) 62%
-        );
-        background-attachment: fixed;
         color: #dbe5ff;
         margin: 0;
         padding: 0;
@@ -44,6 +38,16 @@
         padding: 3px 8px;
         font-family: inherit;
         font-size: 12px;
+      }
+      /* Числа вводятся только руками: стрелки-«крутилки» убраны */
+      input[type="number"] {
+        -moz-appearance: textfield;
+        appearance: textfield;
+      }
+      input[type="number"]::-webkit-inner-spin-button,
+      input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
       }
       input:focus {
         outline: none;
@@ -206,8 +210,7 @@
         min-width: 0;
         margin: 5px 0;
         padding: 10px 12px;
-        background-color: #12234d;
-        background-image: linear-gradient(180deg, #162b61 0%, #112247 100%);
+        background-color: #132658;
         border: 1px solid #243d7a;
         border-radius: 12px;
         box-shadow: 0 6px 18px rgba(2, 8, 28, 0.4);
@@ -1331,6 +1334,11 @@
       }
       function initializeOnLoad() {
         AppController.init();
+        // Приоритеты и рекомендации видны сразу после загрузки, а не только
+        // после первого клика (иначе «Приоритет:» пустой и не мигает)
+        try {
+          AppController.calculateRecommendations();
+        } catch (e) {}
       }
       // Запуск: сначала приложение стартует на локальном состоянии,
       // затем подключается облако — если облачная запись отличается,

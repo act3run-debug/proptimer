@@ -248,3 +248,30 @@ test("конструктор дня: строки в той же теме, по�
   ctx.DayBuilder.close();
   ctx.close();
 });
+
+test("после загрузки приоритеты считаются сразу (initializeOnLoad)", () => {
+  const html = readHtml();
+  assert.match(
+    html,
+    /function initializeOnLoad\(\) \{\s*AppController\.init\(\);[\s\S]*?AppController\.calculateRecommendations\(\);/
+  );
+});
+
+test("фон страницы и карточек однотонный — без градиентов", () => {
+  const html = readHtml();
+  assert.doesNotMatch(html, /gradient\(/, "в стилях нет градиентов");
+  const { ctx, timers } = scene(1);
+  assert.equal(css(ctx, ctx.document.body).backgroundImage || "none", "none");
+  assert.equal(css(ctx, ctx.card(timers[0])).backgroundImage || "none", "none");
+  ctx.close();
+});
+
+test("в числовых полях нет стрелок-«крутилок»: значения вводятся только вручную", () => {
+  const html = readHtml();
+  assert.match(html, /input\[type="number"\]::-webkit-inner-spin-button/);
+  assert.match(html, /input\[type="number"\]\s*\{[^}]*appearance:\s*textfield/);
+  const { ctx, timers } = scene(1);
+  const field = ctx.elementOf(timers[0], "target");
+  assert.equal(field.type, "number", "поле по-прежнему числовое: ввод и валидация сохранены");
+  ctx.close();
+});
