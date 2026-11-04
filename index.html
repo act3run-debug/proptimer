@@ -540,13 +540,17 @@
         grid-column: 3;
         grid-row: 2;
       }
+      .folder-header > button[data-action="merge-folder"] {
+        grid-column: 3;
+        grid-row: 3;
+      }
       .folder-header > button[data-action="to-group"] {
         grid-column: 4;
-        grid-row: 2;
+        grid-row: 3;
       }
       .folder-header > button[data-action="delete-folder"] {
         grid-column: 5;
-        grid-row: 2;
+        grid-row: 3;
       }
       .folder-label {
         min-width: 0;
@@ -729,6 +733,14 @@
         color: #9fb3e3;
         font-size: 12px;
       }
+      .dd-lock {
+        color: #5fd4a0;
+        font-size: 13px;
+        cursor: help;
+      }
+      .dd-row.dd-part {
+        border-style: dashed;
+      }
       .dd-section {
         margin: 12px 0 4px;
         color: #6aa7ff;
@@ -738,6 +750,33 @@
       }
       .dd-errors {
         white-space: pre-line;
+      }
+      /* --- Уведомление об ошибке (названия, объединение) -------------- */
+      #appToast {
+        position: fixed;
+        left: 50%;
+        bottom: 22px;
+        transform: translateX(-50%);
+        max-width: min(560px, 92vw);
+        padding: 10px 16px;
+        background: #4a1d2b;
+        border: 1px solid #ff7b8a;
+        border-radius: 10px;
+        color: #ffd9de;
+        box-shadow: 0 10px 28px rgba(2, 8, 28, 0.6);
+        z-index: 3000;
+        display: none;
+      }
+      #appToast.show {
+        display: block;
+      }
+      .merge-list {
+        max-height: 40vh;
+        overflow: auto;
+        margin: 6px 0;
+      }
+      .merge-siblings.hidden {
+        display: none;
       }
       @media (max-width: 560px) {
         #globalControls {
@@ -792,6 +831,7 @@
       </div>
     </div>
     <div id="timersContainer"></div>
+    <div id="appToast" role="status" aria-live="polite"></div>
     <div id="modalOverlay" class="hidden">
       <div id="modalBox"></div>
     </div>
@@ -885,9 +925,10 @@
           }
           const modalOverlay = document.getElementById("modalOverlay");
           modalOverlay.addEventListener("click", ModalController.handleOverlayClick);
-          modalOverlay.addEventListener("change", e =>
-            DayBuilder.handleChange(e.target)
-          );
+          modalOverlay.addEventListener("change", e => {
+            DayBuilder.handleChange(e.target);
+            MergeController.handleChange(e.target);
+          });
           modalOverlay.addEventListener("input", e =>
             DayBuilder.handleInput(e.target)
           );
@@ -2037,6 +2078,10 @@
               }
               return;
             }
+            if (action === "merge-folder") {
+              if (folderId !== null) MergeController.openFolderModal(folderId);
+              return;
+            }
             // Перенос «В группу» (ТЗ 6)
             if (action === "to-group") {
               if (timerId !== null) {
@@ -2065,6 +2110,8 @@
                 if (timer) this.updateTimer(timer);
               } else if (action === "split") {
                 SplitController.openModal(timerId);
+              } else if (action === "merge") {
+                MergeController.openTimerModal(timerId);
               } else if (action === "apply-tracked") {
                 this.handleTrackedApplyButtonClick(timerId);
               } else if (action === "apply-total") {
@@ -2101,7 +2148,16 @@
         static handleNameChange(input, timerId) {
           const timer = AppState.findTimerById(timerId);
           if (timer) {
-            TimerModel.setName(timer, input.value);
+            if (String(input.value) === String(timer.name)) return;
+            // Пустое или занятое название — ошибка: возвращаем прежнее
+            const error = NameRules.check(input.value, [timer.id]);
+            if (error) {
+              input.value = timer.name;
+              NameRules.toast(error);
+              return;
+            }
+            TimerModel.setName(timer, NameRules.clean(input.value));
+            input.value = timer.name;
             // Осмысленное изменение — доставить другим устройствам сразу
             CloudSync.interactiveSync();
           }
@@ -3235,6 +3291,7 @@
             elements.deleteButton,
             elements.updateButton,
             elements.splitButton,
+            elements.mergeButton,
             elements.toGroupButton,
           ]);
         }
@@ -3465,6 +3522,7 @@
           const deleteButton = this.createDeleteButton(timer);
           const updateButton = this.createUpdateButton(timer);
           const splitButton = this.createSplitButton(timer);
+          const mergeButton = this.createMergeButton(timer);
           const toGroupButton = this.createToGroupButton(timer);
           return [
             trackButton,
@@ -3472,6 +3530,7 @@
             deleteButton,
             updateButton,
             splitButton,
+            mergeButton,
             toGroupButton,
           ];
         }
@@ -3489,6 +3548,11 @@
         }
         static createUpdateButton(timer) {
           return UIFactory.createButton("Обновить", "update");
+        }
+        static createMergeButton(timer) {
+          return UIFactory.createButton("Объединить", "merge", {
+            title: "Влить в этот таймер выбранных сиблингов: время и цель сложатся",
+          });
         }
         static createSplitButton(timer) {
           return UIFactory.createButton("Разбить", "split");
@@ -3626,6 +3690,7 @@
             deleteButton,
             updateButton,
             splitButton,
+            mergeButton,
             toGroupButton,
           ] = this.createControlButtons(timer);
           const trackedApplyButton = this.createTrackedApplyButton(
@@ -3646,6 +3711,7 @@
             deleteButton,
             updateButton,
             splitButton,
+            mergeButton,
             toGroupButton,
             trackedApplyButton,
             applyButton,
@@ -4668,6 +4734,13 @@
             "Доля группы среди сиблингов — производная величина (сумма целей содержимого)";
           header.appendChild(share);
           header.appendChild(
+            UIFactory.createButton("Объединить", "merge-folder", {
+              class: "folder-action",
+              title: "Объединить группу в один таймер",
+              "data-folder-id": String(node.id),
+            })
+          );
+          header.appendChild(
             UIFactory.createButton("В группу", "to-group", {
               class: "folder-action",
               title: "Перенести группу внутрь другой группы",
@@ -4831,7 +4904,17 @@
           return renamed;
         }
         static handleFolderNameChange(input, folderId) {
-          return this.renameFolder(folderId, input.value);
+          const current = TreeModel.folderName(folderId);
+          if (String(input.value) === String(current)) return false;
+          const error = NameRules.check(input.value, [folderId]);
+          if (error) {
+            input.value = current;
+            NameRules.toast(error);
+            return false;
+          }
+          const ok = this.renameFolder(folderId, NameRules.clean(input.value));
+          input.value = TreeModel.folderName(folderId);
+          return ok;
         }
         static handleShareChange(input, timerId) {
           SessionManager.clearJustAfterResetFlag();
@@ -4885,7 +4968,7 @@
               type: "text",
               id: "createGroupName",
               placeholder: "Название группы",
-              value: TreeModel.DEFAULT_FOLDER_NAME,
+              value: NameRules.suggest(TreeModel.DEFAULT_FOLDER_NAME),
             })
           );
           box.appendChild(nameRow);
@@ -4906,8 +4989,13 @@
         static confirm() {
           const input = document.getElementById("createGroupName");
           const name = input ? (input.value || "").trim() : "";
+          const nameError = NameRules.check(name);
+          if (nameError) {
+            ModalController.setError(nameError);
+            return null;
+          }
           ModalController.close();
-          return TreeController.createFolder(name || TreeModel.DEFAULT_FOLDER_NAME);
+          return TreeController.createFolder(NameRules.clean(name));
         }
       }
 
@@ -5006,7 +5094,7 @@
             M.el("input", {
               type: "text",
               id: "moveGroupName",
-              value: TreeModel.DEFAULT_FOLDER_NAME,
+              value: NameRules.suggest(TreeModel.DEFAULT_FOLDER_NAME),
             })
           );
           box.appendChild(nameRow);
@@ -5033,6 +5121,13 @@
           const name = (
             (document.getElementById("moveGroupName") || {}).value || ""
           ).trim();
+          if (!folderBoxes.length && timerBoxes.length && name) {
+            const nameError = NameRules.check(name);
+            if (nameError) {
+              ModalController.setError(nameError);
+              return false;
+            }
+          }
           ModalController.close();
           if (folderBoxes.length) {
             return TreeController.moveToFolder(
@@ -5047,7 +5142,7 @@
             ids.push(Number(ctx.nodeId));
             const folder = TreeModel.wrapNodesIntoFolder(
               ids,
-              name || TreeModel.DEFAULT_FOLDER_NAME
+              name || NameRules.suggest(TreeModel.DEFAULT_FOLDER_NAME)
             );
             TreeController.afterStructureChange();
             return Boolean(folder);
@@ -5396,6 +5491,7 @@
         constructor() {
           this.nodes = new Map();
           this.tempSeq = 0;
+          this.seqCounter = 0;
           this.S = 0;
           this.E = 0;
           this.saved = false;
@@ -5421,6 +5517,7 @@
                 s: null,
                 e: null,
                 isNew: false,
+                seq: ++draft.seqCounter,
               };
               const place = lay.map.get(id);
               if (place && place.d > 0) {
@@ -5446,6 +5543,7 @@
           const copy = new DayDraft();
           this.nodes.forEach((n, id) => copy.nodes.set(id, { ...n }));
           copy.tempSeq = this.tempSeq;
+          copy.seqCounter = this.seqCounter;
           copy.S = this.S;
           copy.E = this.E;
           copy.saved = this.saved;
@@ -5523,6 +5621,7 @@
             s: s === undefined ? null : s,
             e: s === null || s === undefined || e === undefined ? null : e,
             isNew: true,
+            seq: ++this.seqCounter,
           };
           this.nodes.set(node.id, node);
           this.autoNest(node);
@@ -5539,21 +5638,142 @@
             s: null,
             e: null,
             isNew: true,
+            seq: ++this.seqCounter,
           };
           this.nodes.set(node.id, node);
+          this.mirrorIfPart(node);
           return { ok: true, node };
         }
         rename(id, name) {
           const n = this.get(id);
           if (!n) return false;
           n.name = String(name === null || name === undefined ? "" : name);
+          this.mirrorIfPart(n);
           return true;
+        }
+
+        // --- Части (одноимённые сущности) ------------------------------------
+        /**
+         * Новая сущность с названием уже существующей — её ЧАСТЬ: время
+         * ложится на сетку отдельно, а при «Сохранить» прибавляется к основной
+         * сущности. Связь определяется только названием (без учёта регистра и
+         * лишних пробелов) и существует только в окне конструктора.
+         * Возвращает { main: Map(часть → основная), issues: [...] }.
+         */
+        links() {
+          const signature = this.all()
+            .map(n => `${n.id}|${n.kind}|${n.isNew ? 1 : 0}|${n.seq}|${NameRules.key(n.name)}`)
+            .join(";");
+          if (this._linksSig === signature) return this._links;
+          const byKey = new Map();
+          this.all().forEach(n => {
+            const k = NameRules.key(n.name);
+            if (!k) return;
+            if (!byKey.has(k)) byKey.set(k, []);
+            byKey.get(k).push(n);
+          });
+          const main = new Map();
+          const issues = [];
+          const bySeq = (a, b) => a.seq - b.seq;
+          byKey.forEach(list => {
+            if (list.length < 2) return;
+            const name = NameRules.clean(list[0].name);
+            if (new Set(list.map(n => n.kind)).size > 1) {
+              issues.push({ code: "name-kind", ids: list.map(n => n.id), name });
+              return;
+            }
+            const existing = list.filter(n => !n.isNew).sort(bySeq);
+            const fresh = list.filter(n => n.isNew).sort(bySeq);
+            let head;
+            let parts;
+            if (existing.length) {
+              head = existing[0];
+              parts = fresh;
+              if (existing.length > 1) {
+                issues.push({ code: "name-taken", ids: existing.map(n => n.id), name });
+              }
+            } else {
+              head = fresh[0];
+              parts = fresh.slice(1);
+            }
+            parts.forEach(p => main.set(p.id, head.id));
+          });
+          this._linksSig = signature;
+          this._links = { main, issues };
+          return this._links;
+        }
+        isPart(n) {
+          return Boolean(n) && this.links().main.has(n.id);
+        }
+        mainOf(n) {
+          const id = n ? this.links().main.get(n.id) : undefined;
+          return id === undefined ? null : this.get(id);
+        }
+        /** Часть группы получает копию содержимого основной группы (как Части). */
+        mirrorIfPart(node) {
+          if (!node || node.kind !== "f" || !node.isNew || node.mirrored) return;
+          const mainId = this.links().main.get(node.id);
+          if (mainId === undefined || this.children(node.id).length) return;
+          node.mirrored = true;
+          const copy = (srcId, dstId) => {
+            this.children(srcId).forEach(c => {
+              if (this.isPart(c)) return;
+              const clone = {
+                id: --this.tempSeq,
+                kind: c.kind,
+                name: c.name,
+                parent: dstId,
+                s: null,
+                e: null,
+                isNew: true,
+                seq: ++this.seqCounter,
+                home: dstId,
+              };
+              this.nodes.set(clone.id, clone);
+              if (c.kind === "f") {
+                clone.mirrored = true;
+                copy(c.id, clone.id);
+              }
+            });
+          };
+          copy(mainId, node.id);
+        }
+        /**
+         * Свёртка Частей: Части исчезают, их время прибавляется к основным
+         * сущностям, а несвязанное содержимое групп-Частей переходит в основную
+         * группу. Возвращает { draft, extra, anchors }.
+         */
+        fold() {
+          const L = this.links().main;
+          const folded = this.clone();
+          const extra = new Map();
+          const anchors = new Map();
+          this.all().forEach(p => {
+            if (!L.has(p.id)) return;
+            const m = L.get(p.id);
+            if (p.s !== null) {
+              if (!anchors.has(m)) anchors.set(m, []);
+              anchors.get(m).push(p.s);
+            }
+            if (p.kind === "t" && this.timed(p)) {
+              extra.set(m, (extra.get(m) || 0) + this.duration(p));
+            }
+            folded.nodes.delete(p.id);
+          });
+          folded.all().forEach(n => {
+            let par = n.parent;
+            let guard = 0;
+            while (par !== null && L.has(par) && guard++ < 64) par = L.get(par);
+            n.parent = par;
+          });
+          return { draft: folded, extra, anchors };
         }
 
         // --- время -------------------------------------------------------
         /** Начало активности внутри интервала группы — активность в группе (8.3). */
         autoNest(node) {
           if (!node || node.kind !== "t" || node.s === null) return false;
+          if (this.isPart(node)) return false;
           let best = null;
           let bestDepth = -1;
           this.all().forEach(g => {
@@ -5698,7 +5918,26 @@
         remove(id) {
           const n = this.get(id);
           if (!n) return false;
-          [n, ...this.descendants(n.id)].forEach(x => this.nodes.delete(x.id));
+          // Удаляется само, всё содержимое и все Части удаляемых основных
+          // сущностей (на любой глубине); удаление Части — только её самой
+          const doomed = new Set();
+          const addSubtree = x => {
+            doomed.add(x.id);
+            this.descendants(x.id).forEach(d => doomed.add(d.id));
+          };
+          addSubtree(n);
+          const L = this.links().main;
+          let grew = true;
+          while (grew) {
+            grew = false;
+            L.forEach((mainId, partId) => {
+              if (doomed.has(mainId) && !doomed.has(partId)) {
+                addSubtree(this.get(partId));
+                grew = true;
+              }
+            });
+          }
+          doomed.forEach(i => this.nodes.delete(i));
           return true;
         }
 
@@ -5771,6 +6010,35 @@
             ids.forEach(i => red.add(i));
           };
           const arc = n => ({ s: n.s, d: this.duration(n) });
+          // названия: пустое — ошибка; занятое/разнотипное — ошибка
+          this.all().forEach(n => {
+            if (!NameRules.key(n.name)) {
+              err("name-empty", [n.id], "У " + (n.kind === "f" ? "группы" : "активности") + " нет названия");
+            }
+          });
+          const linkInfo = this.links();
+          linkInfo.issues.forEach(i =>
+            err(
+              i.code,
+              i.ids,
+              i.code === "name-kind"
+                ? `Название «${i.name}» нельзя дать и группе, и активности`
+                : `Название «${i.name}» уже занято на основном экране`
+            )
+          );
+          // Часть нельзя помещать в другую группу или выносить из группы
+          linkInfo.main.forEach((mainId, partId) => {
+            const p = this.get(partId);
+            const m = this.get(mainId);
+            const allowed =
+              p.home !== undefined && p.home !== null
+                ? new Set([p.home])
+                : new Set([null, m.parent]);
+            if (!allowed.has(p.parent)) {
+              err("part-parent", [p.id],
+                `Часть «${p.name}» нельзя помещать в другую группу или выносить из группы`);
+            }
+          });
           const containers = [null, ...this.all().filter(n => this.isGroup(n)).map(g => g.id)];
           containers.forEach(cid => {
             const sibs = this.children(cid).filter(n => this.timed(n));
@@ -5918,32 +6186,42 @@
             }
           }
           const total = rootTimed.reduce((sum, n) => sum + this.duration(n), 0);
+          // Части свёрнуты в основные сущности: их время прибавляется к ним
+          const fd = this.fold();
+          const f = fd.draft;
+          const extraOf = n => fd.extra.get(n.id) || 0;
+          const own = n => (f.timed(n) ? f.duration(n) : 0) + extraOf(n);
+          const effTimed = n =>
+            f.isGroup(n)
+              ? f.timed(n) || f.descendants(n.id).some(c => effTimed(c))
+              : f.timed(n) || extraOf(n) > 0;
           const targets = new Map();
-          this.all()
+          f.all()
             .filter(n => n.kind === "t")
             .forEach(n => {
-              targets.set(
-                n.id,
-                this.timed(n) && total > 0 ? this.duration(n) / total : 0
-              );
+              targets.set(n.id, total > 0 ? own(n) / total : 0);
             });
+          const key = (n, base) => {
+            const cands = [];
+            if (f.timed(n)) cands.push(SM.norm(n.s - base));
+            (fd.anchors.get(n.id) || []).forEach(st => cands.push(SM.norm(st - base)));
+            return cands.length ? Math.min(...cands) : 1e9;
+          };
           const sortBy = (list, base) =>
             list
               .slice()
-              .sort((p, q) => SM.norm(p.s - base) - SM.norm(q.s - base))
+              .sort((p, q) => key(p, base) - key(q, base))
               .map(n => n.id);
-          const order = { root: sortBy(rootTimed, ref), folders: {} };
-          this.all()
-            .filter(n => this.isGroup(n))
+          const order = { root: sortBy(f.children(null).filter(effTimed), ref), folders: {} };
+          f.all()
+            .filter(n => f.isGroup(n))
             .forEach(g => {
-              if (!this.timed(g)) return;
-              order.folders[g.id] = sortBy(
-                this.children(g.id).filter(k => this.timed(k)),
-                g.s
-              );
+              const kids = f.children(g.id).filter(effTimed);
+              if (!kids.length) return;
+              order.folders[g.id] = sortBy(kids, g.s !== null ? g.s : ref);
             });
           const startOnly = {};
-          this.all().forEach(n => {
+          f.all().forEach(n => {
             if (n.s !== null && n.e === null) startOnly[n.id] = n.s;
           });
           return { ok: true, S, E, targets, order, startOnly, hasTime: rootTimed.length > 0 };
@@ -5955,7 +6233,8 @@
           if (!plan.ok) return plan;
           const idMap = new Map();
           const keep = new Set();
-          const list = this.all().sort((a, b) => this.depth(a) - this.depth(b));
+          const fd = this.fold().draft;
+          const list = fd.all().sort((a, b) => fd.depth(a) - fd.depth(b));
           const attach = (node, parentRealId) => {
             const target =
               parentRealId === null ? TreeModel.root() : TreeModel.childrenOf(parentRealId);
@@ -5979,13 +6258,13 @@
             }
             // новый узел (или исчезнувший с основного экрана) — создаём
             if (n.kind === "f") {
-              const folder = TreeModel.createFolderNode(n.name);
+              const folder = TreeModel.createFolderNode(NameRules.clean(n.name));
               attach(folder, wantParent === undefined ? null : wantParent);
               idMap.set(n.id, Number(folder.id));
               keep.add(Number(folder.id));
             } else {
               const timer = TimerModel.createTimer();
-              timer.name = n.name;
+              timer.name = NameRules.clean(n.name);
               timer.targetProportion = 0;
               timer.proportion = 0;
               timer.recommendedProportion = 0;
@@ -6202,9 +6481,27 @@
             "data-depth": String(row.depth),
             style: `margin-left:${row.depth * 22}px`,
           });
-          const kind =
-            isGroup ? "Группа конструктора" : n.s === null && n.e === null ? "Активность без времени" : "Активность";
+          const part = draft.isPart(n);
+          if (part) cls.push("dd-part");
+          el.className = cls.join(" ");
+          const kind = part
+            ? isGroup ? "Часть группы" : "Часть активности"
+            : isGroup ? "Группа конструктора" : n.s === null && n.e === null ? "Активность без времени" : "Активность";
           el.appendChild(this.el("span", { class: "dd-kind" }, kind));
+          if (part) {
+            const main = draft.mainOf(n);
+            el.appendChild(
+              this.el(
+                "span",
+                {
+                  class: "dd-lock",
+                  title: `Связано с «${main ? main.name : ""}»: время добавится к основной сущности`,
+                  "data-dd-part-of": main ? String(main.id) : "",
+                },
+                "🔒"
+              )
+            );
+          }
           el.appendChild(
             this.el("input", {
               type: "text",
@@ -6475,6 +6772,361 @@
         }
       }
 
+      // ============================================================
+      //  Правила названий. У таймеров и групп ВСЕ названия различны:
+      //  таймер можно «разбить» в группу, а «Конструктор дня» считает
+      //  одноимённую сущность своей Частью (см. DayDraft), поэтому
+      //  одинаковые названия на основном экране недопустимы. Пустое
+      //  название тоже ошибка. Сравнение без учёта регистра и лишних пробелов.
+      // ============================================================
+      class NameRules {
+        static clean(name) {
+          return String(name === null || name === undefined ? "" : name)
+            .trim()
+            .replace(/\s+/g, " ");
+        }
+        static key(name) {
+          return this.clean(name).toLowerCase();
+        }
+        static entities() {
+          const out = [];
+          AppState.getTimers().forEach(t =>
+            out.push({ id: Number(t.id), name: t.name, kind: "t" })
+          );
+          TreeModel.allFolderNodes().forEach(f =>
+            out.push({ id: Number(f.id), name: f.name, kind: "f" })
+          );
+          return out;
+        }
+        static find(name, exceptIds) {
+          const k = this.key(name);
+          const skip = new Set((exceptIds || []).map(Number));
+          return (
+            this.entities().find(e => !skip.has(e.id) && this.key(e.name) === k) ||
+            null
+          );
+        }
+        /** Текст ошибки или "" — название допустимо. */
+        static check(name, exceptIds) {
+          if (!this.key(name)) return "Название не может быть пустым";
+          const hit = this.find(name, exceptIds);
+          if (hit) {
+            return `Название «${this.clean(name)}» уже занято (${
+              hit.kind === "f" ? "группа" : "таймер"
+            }): названия таймеров и групп не должны совпадать`;
+          }
+          return "";
+        }
+        /** Свободное название на основе base: «Группа», «Группа 2», … */
+        static suggest(base, exceptIds) {
+          if (!this.find(base, exceptIds)) return base;
+          for (let n = 2; n < 1000; n++) {
+            const candidate = `${base} ${n}`;
+            if (!this.find(candidate, exceptIds)) return candidate;
+          }
+          return base;
+        }
+        static toast(message) {
+          const el = document.getElementById("appToast");
+          if (!el) return;
+          el.textContent = message;
+          el.classList.add("show");
+          clearTimeout(this._toastTimer);
+          this._toastTimer = setTimeout(() => el.classList.remove("show"), 5500);
+        }
+      }
+
+      // ============================================================
+      //  «Объединить» — обратная операция к «Разбить». Выбранные
+      //  сиблинги (таймеры и группы) вливаются в один таймер: всё их время
+      //  и целевая пропорция суммируются, сумма уровня не меняется.
+      // ============================================================
+      class MergeController {
+        static SUMMED = [
+          "trackedSeconds",
+          "totalTrackedSeconds",
+          "totalDuration",
+          "dailyTrackedSeconds",
+          "totalSeconds",
+          "dailyTotalSeconds",
+          "originalDailyTotalSeconds",
+          "lifetimeTotalSeconds",
+          "plannedSeconds",
+          "baseAllocation",
+          "targetProportion",
+          "proportion",
+        ];
+        static absorb(base, other) {
+          this.SUMMED.forEach(field => {
+            base[field] = (Number(base[field]) || 0) + (Number(other[field]) || 0);
+          });
+          base.lastSessionDisplayProportion = undefined;
+          return base;
+        }
+        static timersOf(locs) {
+          const out = [];
+          locs.forEach(loc =>
+            TreeModel.descendantTimerIds(loc.node).forEach(id => {
+              const t = AppState.findTimerById(id);
+              if (t && !out.includes(t)) out.push(t);
+            })
+          );
+          return out;
+        }
+        static dropTimers(ids) {
+          const gone = new Set(ids.map(Number));
+          AppState.timers = AppState.timers.filter(t => !gone.has(Number(t.id)));
+          gone.forEach(id => {
+            const el = AppState.getTimerElement(id);
+            if (el) el.remove();
+            TimerView.forgetCompactState(id);
+          });
+        }
+        static dropNodes(locsOrNodes, siblings) {
+          locsOrNodes.forEach(node => {
+            const i = siblings.indexOf(node);
+            if (i !== -1) siblings.splice(i, 1);
+            if (TreeModel.isFolder(node)) {
+              FolderView.forget(node.id);
+              TreeModel.allFolderNodes(node.children || []).forEach(f =>
+                FolderView.forget(f.id)
+              );
+            }
+          });
+        }
+        static stopAll(timers) {
+          let any = false;
+          timers.forEach(t => {
+            if (t.isTracking) {
+              TimerModel.stopTracking(t);
+              any = true;
+            }
+          });
+          return any;
+        }
+        static finish(anyWasTracking) {
+          if (anyWasTracking) CloudSync.clearTrackingOwner();
+          TreeModel.changed();
+          TimerView.renderTree();
+          TimerView.syncAllProportionInputs();
+          if (AppState.getGlobalEndTime()) {
+            TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+          }
+          CalculationService.updateCalculations();
+          AppController.calculateRecommendations();
+          TimeManager.syncAutoAway();
+          AppState.notify("displayNeedsUpdate");
+          StorageService.saveTimersToLocalStorage();
+          CloudSync.bumpControl();
+        }
+        /** Сиблинги узла (без него самого): [{ node, ... }]. */
+        static siblingNodes(nodeId) {
+          const loc = TreeModel.findNode(nodeId);
+          if (!loc) return [];
+          return loc.siblings.filter(n => n !== loc.node);
+        }
+        /** Влить выбранных сиблингов в таймер baseId. Имя остаётся прежним. */
+        static mergeIntoTimer(baseId, nodeIds) {
+          SessionManager.clearJustAfterResetFlag();
+          const base = AppState.findTimerById(baseId);
+          const loc = TreeModel.findNode(baseId);
+          if (!base || !loc) return null;
+          const wanted = new Set((nodeIds || []).map(Number));
+          const targets = loc.siblings.filter(
+            n => n !== loc.node && wanted.has(Number(n.id))
+          );
+          if (!targets.length) return null;
+          ScheduleModel.reconcile();
+          const doomed = this.timersOf(targets.map(node => ({ node })));
+          const wasTracking = base.isTracking;
+          const anyTracking = this.stopAll([base, ...doomed]);
+          doomed.forEach(t => this.absorb(base, t));
+          this.dropNodes(targets, loc.siblings);
+          this.dropTimers(doomed.map(t => t.id));
+          if (wasTracking) TimerModel.startTracking(base);
+          this.finish(anyTracking && !wasTracking);
+          return base;
+        }
+        /**
+         * Склеить в один НОВЫЙ таймер группу folderId (всё, что в ней) и,
+         * если заданы, выбранных сиблингов. Таймер встаёт на место группы.
+         */
+        static mergeIntoNewTimer(folderId, siblingIds, name) {
+          SessionManager.clearJustAfterResetFlag();
+          const loc = TreeModel.findNode(folderId);
+          if (!loc || !TreeModel.isFolder(loc.node)) return null;
+          const wanted = new Set((siblingIds || []).map(Number));
+          const others = loc.siblings.filter(
+            n => n !== loc.node && wanted.has(Number(n.id))
+          );
+          ScheduleModel.reconcile();
+          const doomed = this.timersOf([loc, ...others.map(node => ({ node }))]);
+          const anyTracking = this.stopAll(doomed);
+          const merged = TimerModel.createTimer();
+          merged.name = NameRules.clean(name);
+          merged.targetProportion = 0;
+          merged.proportion = 0;
+          merged.recommendedProportion = 0;
+          doomed.forEach(t => this.absorb(merged, t));
+          const folderNode = loc.node;
+          const siblings = loc.siblings;
+          siblings.splice(loc.index, 1, TreeModel.createTimerNode(merged.id));
+          ScheduleModel.replaceId(folderNode.id, merged.id);
+          this.dropNodes([folderNode, ...others], siblings);
+          AppState.timers.push(merged);
+          this.dropTimers(doomed.map(t => t.id));
+          this.finish(anyTracking);
+          return merged;
+        }
+
+        // --- окна ----------------------------------------------------------
+        static label(node) {
+          if (TreeModel.isFolder(node)) {
+            return ` 📁 ${node.name || "(без названия)"} · цель ${Number(
+              TreeModel.nodeTarget(node)
+            ).toFixed(3)}`;
+          }
+          const t = AppState.findTimerById(node.id);
+          return ` ${t && t.name ? t.name : "(без названия)"} · цель ${Number(
+            t ? t.targetProportion : 0
+          ).toFixed(3)}`;
+        }
+        static siblingList(nodeId) {
+          const M = ModalController;
+          const list = M.el("div", { id: "mergeList", class: "merge-list" });
+          const nodes = this.siblingNodes(nodeId);
+          nodes.forEach(node => {
+            const item = M.el("label", { class: "group-select-item" });
+            item.appendChild(
+              M.el("input", {
+                type: "checkbox",
+                class: "merge-checkbox",
+                "data-node-id": String(node.id),
+              })
+            );
+            item.appendChild(document.createTextNode(this.label(node)));
+            list.appendChild(item);
+          });
+          if (!nodes.length) {
+            list.appendChild(
+              M.el("div", { class: "modal-hint" }, "Сиблингов нет — объединять не с чем.")
+            );
+          }
+          return list;
+        }
+        static openTimerModal(timerId) {
+          const timer = AppState.findTimerById(timerId);
+          if (!timer) return;
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          box.appendChild(
+            M.el("div", { class: "modal-title" }, `Объединить «${timer.name || "без названия"}» с…`)
+          );
+          box.appendChild(
+            M.el(
+              "div",
+              { class: "modal-hint" },
+              "Отмеченные таймеры и группы вольются в этот таймер: их время и целевая пропорция сложатся. Название останется прежним."
+            )
+          );
+          box.appendChild(this.siblingList(timerId));
+          box.appendChild(M.errorRow());
+          box.appendChild(M.buttonRow("mergeConfirm", "merge-confirm", "Объединить"));
+          M.context = { type: "merge", mode: "timer", nodeId: timerId };
+          M.open();
+        }
+        static openFolderModal(folderId) {
+          const loc = TreeModel.findNode(folderId);
+          if (!loc || !TreeModel.isFolder(loc.node)) return;
+          const M = ModalController;
+          const box = M.box();
+          box.innerHTML = "";
+          box.appendChild(
+            M.el("div", { class: "modal-title" }, `Объединить группу «${loc.node.name || "без названия"}»`)
+          );
+          const radio = (value, text, checked) => {
+            const label = M.el("label", { class: "group-select-item" });
+            const attrs = { type: "radio", name: "mergeMode", value, class: "merge-mode" };
+            if (checked) attrs.checked = "checked";
+            const input = M.el("input", attrs);
+            if (checked) input.checked = true;
+            label.appendChild(input);
+            label.appendChild(document.createTextNode(` ${text}`));
+            return label;
+          };
+          box.appendChild(
+            radio(
+              "children",
+              "Объединить дочернее — всё, что внутри группы, склеится в один таймер с названием группы",
+              true
+            )
+          );
+          box.appendChild(
+            radio("siblings", "Объединиться с сиблингами — выбрать с кем и назвать новый таймер", false)
+          );
+          const section = M.el("div", { id: "mergeSiblings", class: "merge-siblings hidden" });
+          section.appendChild(this.siblingList(folderId));
+          const nameRow = M.el("div", { class: "modal-row" });
+          nameRow.appendChild(M.el("label", { for: "mergeName" }, "Название нового таймера:"));
+          nameRow.appendChild(M.el("input", { type: "text", id: "mergeName", value: "" }));
+          section.appendChild(nameRow);
+          box.appendChild(section);
+          box.appendChild(M.errorRow());
+          box.appendChild(M.buttonRow("mergeConfirm", "merge-confirm", "Объединить"));
+          M.context = { type: "merge", mode: "folder", nodeId: folderId };
+          M.open();
+        }
+        static handleChange(target) {
+          if (!target || !target.classList || !target.classList.contains("merge-mode")) return;
+          const section = document.getElementById("mergeSiblings");
+          if (section) section.classList.toggle("hidden", target.value !== "siblings");
+        }
+        static confirm() {
+          const ctx = ModalController.context;
+          if (!ctx || ctx.type !== "merge") return null;
+          const checked = Array.from(document.querySelectorAll(".merge-checkbox:checked")).map(cb =>
+            Number(cb.getAttribute("data-node-id"))
+          );
+          if (ctx.mode === "timer") {
+            if (!checked.length) {
+              ModalController.setError("Отметьте, с чем объединить");
+              return null;
+            }
+            ModalController.close();
+            return this.mergeIntoTimer(ctx.nodeId, checked);
+          }
+          const modeInput = document.querySelector(".merge-mode:checked");
+          const mode = modeInput ? modeInput.value : "children";
+          const loc = TreeModel.findNode(ctx.nodeId);
+          if (!loc) return null;
+          if (mode === "children") {
+            ModalController.close();
+            return this.mergeIntoNewTimer(ctx.nodeId, [], loc.node.name);
+          }
+          if (!checked.length) {
+            ModalController.setError("Отметьте сиблингов, с которыми объединить");
+            return null;
+          }
+          const name = (document.getElementById("mergeName") || {}).value || "";
+          // имена вливаемых сущностей исчезнут, поэтому занять их можно
+          const vanishing = [ctx.nodeId];
+          [loc.node, ...loc.siblings.filter(n => checked.includes(Number(n.id)))].forEach(node => {
+            vanishing.push(Number(node.id));
+            TreeModel.flatten(TreeModel.isFolder(node) ? node.children : [], 0, node, []).forEach(x =>
+              vanishing.push(x.id)
+            );
+          });
+          const error = NameRules.check(name, vanishing);
+          if (error) {
+            ModalController.setError(error);
+            return null;
+          }
+          ModalController.close();
+          return this.mergeIntoNewTimer(ctx.nodeId, checked, name);
+        }
+      }
+
       class MenuController {
         // Выпадающее меню «Операции» (кнопка справа наверху)
         static toggle() {
@@ -6572,6 +7224,8 @@
             CreateGroupController.confirm();
           } else if (action === "move-confirm") {
             MoveToGroupController.confirm();
+          } else if (action === "merge-confirm") {
+            MergeController.confirm();
           } else if (
             typeof action === "string" &&
             action.indexOf("cloud-") === 0
@@ -6643,8 +7297,13 @@
             );
             return;
           }
+          const nameError = NameRules.check(name);
+          if (nameError) {
+            ModalController.setError(nameError);
+            return;
+          }
           ModalController.close();
-          AppController.addNewTimer(name, share);
+          AppController.addNewTimer(NameRules.clean(name), share);
         }
       }
       class GroupTaskController {
@@ -6728,7 +7387,7 @@
             M.el("input", {
               type: "text",
               id: "groupTaskFolderName",
-              value: TreeModel.DEFAULT_FOLDER_NAME,
+              value: NameRules.suggest(TreeModel.DEFAULT_FOLDER_NAME),
             })
           );
           box.appendChild(folderRow);
@@ -6799,8 +7458,25 @@
             );
             return;
           }
+          const taskError = NameRules.check(name);
+          if (taskError) {
+            ModalController.setError(taskError);
+            return;
+          }
+          const hasFolder = checked.some(cb => cb.classList.contains("group-folder"));
+          if (!hasFolder) {
+            // из отмеченных таймеров создаётся новая группа — ей тоже нужно свободное имя
+            const groupName = folderName || NameRules.suggest(TreeModel.DEFAULT_FOLDER_NAME);
+            const groupError = NameRules.check(groupName);
+            if (groupError || NameRules.key(groupName) === NameRules.key(name)) {
+              ModalController.setError(
+                groupError || "Название группы и новой задачи должны различаться"
+              );
+              return;
+            }
+          }
           ModalController.close();
-          AppController.createTaskInGroup(ids, name, share, folderName);
+          AppController.createTaskInGroup(ids, NameRules.clean(name), share, folderName);
         }
       }
       class SplitController {
@@ -6937,6 +7613,27 @@
           }
           const folderInput = document.getElementById("splitFolderName");
           const folderName = folderInput ? (folderInput.value || "").trim() : "";
+          const keys = specs.map(x => NameRules.key(x.name));
+          if (new Set(keys).size !== keys.length) {
+            ModalController.setError("Названия подзадач должны различаться");
+            return;
+          }
+          for (const spec of specs) {
+            const specError = NameRules.check(spec.name, [ctx.timerId]);
+            if (specError) {
+              ModalController.setError(specError);
+              return;
+            }
+          }
+          if (folderName) {
+            const folderError = NameRules.check(folderName, [ctx.timerId]);
+            if (folderError || keys.includes(NameRules.key(folderName))) {
+              ModalController.setError(
+                folderError || "Название группы не должно совпадать с названием подзадачи"
+              );
+              return;
+            }
+          }
           ModalController.close();
           AppController.splitTimer(ctx.timerId, specs, folderName);
         }

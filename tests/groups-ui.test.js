@@ -53,16 +53,19 @@ const cardButton = (ctx, node, action) => {
 //  «Создать группу»
 // =====================================================================
 
-test("UI: «Создать группу» — название по умолчанию, пустое название заменяется умолчанием", () => {
+test("UI: «Создать группу» — название предложено; пустое название — ошибка, окно остаётся открытым", () => {
   const { ctx } = world([{ name: "A", t: 1 }]);
   openOperation(ctx, "create-group");
   assert.equal(byId(ctx, "createGroupName").value, "Группа", "название предложено");
   byId(ctx, "createGroupName").value = "   ";
   ctx.click(byId(ctx, "createGroupConfirm"));
+  assert.equal(modalOpen(ctx), true, "пустое название — ошибка");
+  assert.match(byId(ctx, "modalError").textContent, /пустым/);
+  assert.equal(T(ctx).allFolderNodes().length, 0);
+  byId(ctx, "createGroupName").value = "Работа";
+  ctx.click(byId(ctx, "createGroupConfirm"));
   assert.equal(modalOpen(ctx), false, "модалка закрыта");
-  const folders = T(ctx).allFolderNodes();
-  assert.equal(folders.length, 1);
-  assert.equal(folders[0].name, "Группа", "пустое название заменено умолчанием");
+  assert.equal(T(ctx).allFolderNodes()[0].name, "Работа");
   ctx.close();
 });
 
