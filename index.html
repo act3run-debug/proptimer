@@ -219,12 +219,13 @@
       /* --- Конструктор дня ------------------------------------------- */
       #modalBox.day-builder {
         min-width: 560px;
-        width: 880px;
+        width: 980px;
       }
       #scheduleStartLabel {
         white-space: nowrap;
       }
-      #scheduleStart {
+      #scheduleStart,
+      #globalEndTime {
         width: 110px;
       }
       .dd-toolbar {
@@ -5307,53 +5308,18 @@
           return { ok: true };
         }
 
-        // --- удаление (раздел 12) ----------------------------------------
+        // --- удаление ------------------------------------------------------
+        /**
+         * Удаление в конструкторе НИЧЕГО не пересчитывает: активность —
+         * сама, группа — вместе с содержимым, а время всех остальных остаётся
+         * прежним. Доли и перераспределение — дело основного экрана; в окне
+         * образовавшуюся дыру (лишний промежуток, свободное время в группе)
+         * пользователь закрывает подгонкой времени, пока она подсвечена.
+         */
         remove(id) {
           const n = this.get(id);
           if (!n) return false;
-          const SM = ScheduleModel;
-          const before = this.analyze();
-          const parentId = n.parent;
-          const wasTimed = this.timed(n);
-          const subtree = [n, ...this.descendants(n.id)];
-          subtree.forEach(x => this.nodes.delete(x.id));
-          if (!wasTimed) return true;
-          const sibs = this.children(parentId).filter(x => this.timed(x));
-          if (!sibs.length) return true;
-          const par = parentId !== null ? this.get(parentId) : null;
-          const parTimed = Boolean(par) && this.timed(par);
-          const ref = par ? (par.s !== null ? par.s : 0) : before.ref;
-          const byTime = list =>
-            list.slice().sort((a, b) => SM.norm(a.s - ref) - SM.norm(b.s - ref));
-          // 12.3: единственный промежуток — соседний крайний элемент вытягивается
-          if (parentId === null && before.gapCount === 1) {
-            const hole = before.rootHoles[0];
-            const nEnd = SM.normEnd(n.s + SM.dur(n.s, n.e));
-            if (Math.abs(SM.norm(nEnd) - SM.norm(hole.from)) < 1e-9) {
-              const prev = byTime(sibs).pop();
-              this.setTime(prev.id, prev.s, nEnd);
-              return true;
-            }
-            if (Math.abs(SM.norm(n.s) - SM.norm(hole.to)) < 1e-9) {
-              const next = byTime(sibs)[0];
-              this.setTime(next.id, n.s, next.e);
-              return true;
-            }
-          }
-          // 12.1.2–12.1.3: освободившееся делится между оставшимися того же
-          // уровня пропорционально Целям (длительностям), порядок сохраняется
-          const ordered = byTime(sibs);
-          const total = ordered.reduce((sum, x) => sum + SM.dur(x.s, x.e), 0);
-          const span = parTimed ? SM.dur(par.s, par.e) : total + SM.dur(n.s, n.e);
-          const origin = parTimed ? par.s : byTime([n, ...sibs])[0].s;
-          let acc = 0;
-          const bounds = ordered.map(x => {
-            const from = Math.round(origin + (acc / total) * span);
-            acc += SM.dur(x.s, x.e);
-            const to = Math.round(origin + (acc / total) * span);
-            return { x, from, to: Math.max(to, from + 1) };
-          });
-          bounds.forEach(b => this.setTime(b.x.id, SM.norm(b.from), SM.normEnd(b.to)));
+          [n, ...this.descendants(n.id)].forEach(x => this.nodes.delete(x.id));
           return true;
         }
 

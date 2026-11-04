@@ -947,43 +947,63 @@ test("11.4.3: «Сохранить» применяет состояние ок�
 });
 
 // =====================================================================
-//  12. Удаление
+//  Удаление в конструкторе: время остальных НЕ пересчитывается
 // =====================================================================
 
-test("12.1.2/12.1.3: удаление в середине — освободившееся делится пропорционально, порядок прежний", () => {
+test("удаление в середине: время остальных не меняется, на месте удалённой остаётся дыра", () => {
   const { ctx } = world([["A", 0.25], ["B", 0.25], ["C", 0.5]]);
   const d = D(ctx);
   put(d, "A", "0:00", "6:00");
   put(d, "B", "6:00", "12:00");
   put(d, "C", "12:00", "24:00");
   d.remove(byName(d, "B").id);
-  assert.deepEqual(span(ctx, d, "A"), ["00:00", "08:00"], "A: 6 из 18 → 8 ч");
-  assert.deepEqual(span(ctx, d, "C"), ["08:00", "24:00"], "C: 12 из 18 → 16 ч");
-  assert.equal(d.analyze().gapCount, 0);
+  assert.deepEqual(span(ctx, d, "A"), ["00:00", "06:00"], "время не пересчитывается");
+  assert.deepEqual(span(ctx, d, "C"), ["12:00", "24:00"]);
+  const an = d.analyze();
+  assert.equal(an.gapCount, 1, "образовался промежуток 6:00–12:00");
+  assert.deepEqual(sorted(an.blue), sorted(ids(d, "A", "C")), "он подсвечен синим");
+  assert.deepEqual(errCodes(d), [], "один промежуток — допустим, сохранять можно");
   ctx.close();
 });
 
-test("12.1.4: доли внутри оставшихся групп при удалении не меняются", () => {
+test("удаление: после неё два промежутка — красная подсветка, сохранение заблокировано, пока пользователь не подгонит время", () => {
+  const { ctx } = world([["A", 0.25], ["B", 0.25], ["C", 0.25], ["D", 0.25]]);
+  const d = D(ctx);
+  put(d, "A", "8:00", "9:00");
+  put(d, "B", "9:00", "10:00");
+  put(d, "C", "10:00", "11:00");
+  put(d, "D", "11:00", "12:00");
+  d.remove(byName(d, "B").id);
+  d.remove(byName(d, "D").id);
+  // остались A 8–9 и C 10–11: промежутки 9–10 и 11–8
+  const an = d.analyze();
+  assert.equal(an.gapCount, 2);
+  assert.ok(errCodes(d).includes("gaps"));
+  assert.equal(d.commit().ok, false);
+  put(d, "C", "9:00", "10:00");
+  assert.deepEqual(errCodes(d), []);
+  assert.equal(d.commit().ok, true);
+  ctx.close();
+});
+
+test("удаление в конструкторе не перераспределяет время и в группах: доли внутри не меняются", () => {
   const { ctx } = world([["A", 0.2], ["B", 0.2], ["C", 0.6]]);
   const d = D(ctx);
   const g = d.createGroup("Группа").node;
   d.setTime(g.id, hm("0:00"), hm("12:00"));
-  put(d, "A", "0:00", "4:00");
-  put(d, "B", "4:00", "12:00");
   d.toGroup(byName(d, "A").id, g.id);
   d.toGroup(byName(d, "B").id, g.id);
   put(d, "A", "0:00", "4:00");
   put(d, "B", "4:00", "12:00");
   put(d, "C", "12:00", "24:00");
   d.remove(byName(d, "C").id);
-  // группа заняла все сутки, внутренние доли A:B = 1:2 прежние
-  assert.deepEqual(span(ctx, d, "Группа"), ["00:00", "24:00"]);
-  assert.equal(d.duration(byName(d, "A")) * 2, d.duration(byName(d, "B")));
-  assert.deepEqual(errCodes(d), []);
+  assert.deepEqual(span(ctx, d, "Группа"), ["00:00", "12:00"], "группа не растянулась");
+  assert.deepEqual(span(ctx, d, "A"), ["00:00", "04:00"]);
+  assert.deepEqual(span(ctx, d, "B"), ["04:00", "12:00"]);
   ctx.close();
 });
 
-test("12.3.1: удалена последняя перед промежутком — предыдущая вытягивается, промежуток не меняется", () => {
+test("удалена последняя перед промежутком: остальные не двигаются, промежуток просто больше", () => {
   const { ctx } = world([["A", 0.34], ["B", 0.33], ["C", 0.33]]);
   const d = D(ctx);
   put(d, "A", "9:00", "11:00");
@@ -991,24 +1011,28 @@ test("12.3.1: удалена последняя перед промежутко�
   put(d, "C", "13:00", "15:00");
   const gap = d.analyze().rootHoles[0];
   d.remove(byName(d, "C").id);
-  assert.deepEqual(span(ctx, d, "B"), ["11:00", "15:00"], "вытянулась до конца удалённой");
-  assert.deepEqual(span(ctx, d, "A"), ["09:00", "11:00"], "остальные не двигались");
+  assert.deepEqual(span(ctx, d, "B"), ["11:00", "13:00"], "сосед не вытягивается");
+  assert.deepEqual(span(ctx, d, "A"), ["09:00", "11:00"]);
   const after = d.analyze();
   assert.equal(after.gapCount, 1);
-  near(after.rootHoles[0].len, gap.len, "размер промежутка");
+  near(after.rootHoles[0].len, gap.len + 120, "промежуток вырос на 2 часа");
+  assert.equal(d.commit().ok, true);
+  assert.equal(ctx.AppState.getSchedule().end, hm("13:00"), "«Конец» — конец новой последней");
   ctx.close();
 });
 
-test("12.3.2: удалена первая после промежутка — следующая сдвигается к началу прежней первой", () => {
+test("удалена первая после промежутка: остальные не двигаются, «Начало» — начало новой первой", () => {
   const { ctx } = world([["A", 0.34], ["B", 0.33], ["C", 0.33]]);
   const d = D(ctx);
   put(d, "A", "9:00", "11:00");
   put(d, "B", "11:00", "13:00");
   put(d, "C", "13:00", "15:00");
   d.remove(byName(d, "A").id);
-  assert.deepEqual(span(ctx, d, "B"), ["09:00", "13:00"]);
+  assert.deepEqual(span(ctx, d, "B"), ["11:00", "13:00"]);
   assert.deepEqual(span(ctx, d, "C"), ["13:00", "15:00"]);
   assert.equal(d.analyze().gapCount, 1);
+  assert.equal(d.commit().ok, true);
+  assert.equal(ctx.AppState.getSchedule().start, hm("11:00"));
   ctx.close();
 });
 
@@ -1023,21 +1047,23 @@ test("12.1.1/7.3.9: удаление группы — вместе с содер
   ctx.close();
 });
 
-test("12.4: удаление внутри группы — суммарное время группы то же", () => {
+test("удаление внутри группы: время группы и остальных не меняется, внутри — свободное место (ошибка до подгонки)", () => {
   const { ctx } = world([["A", 0.25], ["B", 0.25], ["C", 0.5]]);
   const d = D(ctx);
   const g = d.createGroup("Группа").node;
   d.setTime(g.id, hm("6:00"), hm("12:00"));
-  [["A", "6:00", "7:00"], ["B", "7:00", "9:00"], ["C", "9:00", "12:00"]].forEach(([n, s, e]) => {
+  [["A", "6:00", "7:00"], ["B", "7:00", "9:00"], ["C", "9:00", "12:00"]].forEach(([n, s0, e0]) => {
     d.toGroup(byName(d, n).id, g.id);
-    put(d, n, s, e);
+    put(d, n, s0, e0);
   });
   assert.deepEqual(errCodes(d), []);
   d.remove(byName(d, "B").id);
-  assert.deepEqual(span(ctx, d, "Группа"), ["06:00", "12:00"]);
-  assert.equal(d.duration(byName(d, "A")) + d.duration(byName(d, "C")), 360);
-  near(d.duration(byName(d, "A")) / d.duration(byName(d, "C")), 1 / 3, "пропорционально прежним (1:3)", 1e-2);
-  assert.deepEqual(errCodes(d), []);
+  assert.deepEqual(span(ctx, d, "Группа"), ["06:00", "12:00"], "время группы то же");
+  assert.deepEqual(span(ctx, d, "A"), ["06:00", "07:00"]);
+  assert.deepEqual(span(ctx, d, "C"), ["09:00", "12:00"]);
+  assert.ok(errCodes(d).includes("group-free"), "в группе образовалось свободное время");
+  put(d, "C", "7:00", "12:00");
+  assert.deepEqual(errCodes(d), [], "пользователь подогнал время — ошибки нет");
   ctx.close();
 });
 

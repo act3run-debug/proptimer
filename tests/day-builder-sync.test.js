@@ -501,3 +501,24 @@ test("1.4: открытие и «Закрыть» конструктора ни�
   assert.equal(snapshot(), before, "«Закрыть» откатывает всё к сохранённому");
   ctx.close();
 });
+
+test("прилипание «Конца» работает при КАЖДОМ вводе после первого сохранения, а не один раз", () => {
+  const { ctx } = world([["A", 0.5], ["B", 0.5]]);
+  const d = D(ctx);
+  put(d, "A", "15:00", "14:00"); // 23 часа
+  put(d, "B", "14:00", "15:00"); // 1 час: концы в 14:00 и 15:00, промежутка нет
+  assert.equal(d.commit().ok, true);
+  const sched = ctx.AppState.getSchedule();
+  for (const [typed, expected] of [["14:54", "15:00"], ["14:10", "14:00"], ["20:00", "15:00"], ["14:31", "15:00"]]) {
+    ctx.setEndTime(typed);
+    ctx.ScheduleModel.onEndFieldCommitted();
+    assert.equal(ctx.document.getElementById("globalEndTime").value, expected, `${typed} → ${expected}`);
+    assert.equal(sched.start, hm(expected), "«Начало» следом за «Концом»");
+  }
+  // и после ещё одного сохранения из конструктора механика не отключается
+  assert.equal(D(ctx).commit().ok, true);
+  ctx.setEndTime("14:55");
+  ctx.ScheduleModel.onEndFieldCommitted();
+  assert.equal(ctx.document.getElementById("globalEndTime").value, "15:00");
+  ctx.close();
+});
