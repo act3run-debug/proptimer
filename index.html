@@ -529,6 +529,11 @@
           modalOverlay.addEventListener("input", e =>
             DayBuilder.handleInput(e.target)
           );
+          // Поле времени при входе выделяется целиком: новое значение
+          // вводится поверх старого, а не дописывается к нему
+          modalOverlay.addEventListener("focusin", e =>
+            DayBuilder.handleFocus(e.target)
+          );
         }
         static handleFieldFocusTrigger(event) {
           // «Дать фокус» / «убрать фокус» с поля — триггер автообновления
@@ -1204,6 +1209,10 @@
             "tree",
             JSON.stringify(AppState.getTree())
           );
+          // Порядок по времени «Конструктора дня» обновляем перед записью:
+          // создание таймера в обход TreeModel.changed() иначе уходило бы
+          // в облако со старым порядком до следующего согласования
+          ScheduleModel.reconcile();
           this.setItemToLocalStorage(
             "schedule",
             JSON.stringify(AppState.getSchedule())
@@ -6010,6 +6019,17 @@
             draft.setEnd(id, null);
             this.messages = [];
             return this.render();
+          }
+        }
+        static handleFocus(target) {
+          if (
+            this.draft &&
+            target &&
+            target.classList &&
+            target.classList.contains("dd-time") &&
+            typeof target.select === "function"
+          ) {
+            target.select();
           }
         }
         /** Изменение поля (change): применить к черновику и перерисовать. */

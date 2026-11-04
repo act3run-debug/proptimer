@@ -561,3 +561,14 @@ test("полный сценарий: день 9:00–18:00 с обедом и г
   assert.equal(qa(ctx, ".dd-red").length, 0, "расписание согласовано");
   ctx.close();
 });
+
+test("поле времени выделяется целиком при входе — новое значение вводится поверх старого", () => {
+  const { ctx } = world([["A", 1]]);
+  openBuilder(ctx);
+  setTime(ctx, "A", "9:00", "10:00");
+  const input = row(ctx, "A").querySelector(".dd-end");
+  input.dispatchEvent(new ctx.window.Event("focusin", { bubbles: true }));
+  assert.equal(input.selectionStart, 0);
+  assert.equal(input.selectionEnd, input.value.length, "выделено всё значение");
+  ctx.close();
+});

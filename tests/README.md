@@ -9,7 +9,7 @@
 
 ```bash
 npm install     # нужен только jsdom (dev-зависимость)
-npm test        # node --test  → 491 тест (~50 с)
+npm test        # node --test  → 494 теста (~50 с)
 ```
 
 Требования: Node.js 20+ (проверено на v24.19.0 и jsdom 26; jsdom 30 требует Node 22+).

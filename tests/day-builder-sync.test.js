@@ -522,3 +522,35 @@ test("прилипание «Конца» работает при КАЖДОМ �
   assert.equal(ctx.document.getElementById("globalEndTime").value, "15:00");
   ctx.close();
 });
+test("6.3: новый таймер с основного экрана уходит в облачный снимок уже в порядке расписания", () => {
+  const { ctx } = gapped();
+  ctx.AppController.addNewTimer("Новый", 0.25);
+  // CloudSync.bumpControl сохраняет состояние в localStorage перед отправкой
+  ctx.StorageService.saveToLocalStorage();
+  const saved = JSON.parse(ctx.window.localStorage.getItem("schedule"));
+  assert.equal(saved.order.root.length, 4, "в порядке по времени есть и новый таймер");
+  assert.equal(
+    saved.order.root[3],
+    ctx.AppState.getTimers().find(t => t.name === "Новый").id,
+    "он последний — перед промежутком"
+  );
+  ctx.close();
+});
+
+test("6.3: правка Конца и добавление таймера на одном устройстве видны на другом после приёма снимка", () => {
+  const { ctx } = gapped();
+  ctx.setEndTime("18:00");
+  ctx.ScheduleModel.onEndFieldCommitted();
+  ctx.AppController.addNewTimer("Прогулка", 0.25);
+  ctx.StorageService.saveToLocalStorage();
+  const keys = ["timers", "tree", "schedule", "globalEndTimeValue", "lastSessionEndTime"];
+  const other = setup();
+  keys.forEach(k => other.window.localStorage.setItem(k, ctx.window.localStorage.getItem(k)));
+  other.StorageService.loadTimersFromLocalStorage();
+  const d = D(other);
+  assert.equal(other.AppState.getSchedule().start, hm("12:00"), "«Начало» сдвинулось вслед за «Концом» (15:00 → 18:00)");
+  assert.equal(byName(d, "Прогулка").e, hm("18:00"), "новая активность заканчивается в «Конец»");
+  assert.equal(Array.from(d.analyze().errors).length, 0);
+  other.close();
+  ctx.close();
+});
