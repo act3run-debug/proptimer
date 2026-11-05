@@ -423,12 +423,21 @@ test("слияние группы в таймер сохраняет её поз
   d0.setTime(node("C").id, 360, 720);
   d0.setTime(node("A").id, 720, 1440);
   assert.equal(d0.commit().ok, true);
+  const slot = ctx.AppState.getSchedule().order.root.indexOf(Number(f.id));
   openFolderMerge(ctx, f);
   ctx.click(byId(ctx, "mergeConfirm"));
+  const mergedTimer = ctx.AppState.getTimers().find(t => t.name === "Блок");
+  assert.equal(
+    ctx.AppState.getSchedule().order.root.indexOf(Number(mergedTimer.id)),
+    slot,
+    "таймер занял в порядке место группы"
+  );
   const d = ctx.DayDraft.fromMain();
-  const rows = Array.from(d.rows().map(r => r.node.name));
-  assert.deepEqual(rows, ["Блок", "A"], "«Блок» по-прежнему первый");
-  assert.equal(d.duration(d.all().find(n => n.name === "Блок")), 720);
+  const block = d.all().find(n => n.name === "Блок");
+  const a = d.all().find(n => n.name === "A");
+  assert.equal(d.duration(block), 720);
+  // позиции по циферблату не сдвинулись (абсолютное «первое» зависит от «Конца»)
+  assert.equal(ctx.ScheduleModel.norm(a.s - block.s), 720, "«A» следует за «Блоком» на 12 часов");
   ctx.close();
 });
 

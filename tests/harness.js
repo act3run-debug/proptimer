@@ -77,6 +77,7 @@ function collectGlobals() {
     "DayDraft",
     "EventService",
     "FolderView",
+    "FreezeMode",
     "GroupTaskController",
     "MenuController",
     "MergeController",

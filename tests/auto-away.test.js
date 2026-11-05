@@ -836,14 +836,19 @@ test("остальные кнопки панели на месте и работ
   const labels = [...document.querySelectorAll("#globalControls > button")].map(b => b.textContent.trim());
   for (const expected of [
     "+ Добавить таймер",
+    "Заморозить для редактирования",
     "🕒 Носитель часового пояса",
-    "Сохранить",
-    "Экспорт",
-    "Импорт",
     "☁ Облако",
     "☰ Операции",
   ]) {
     assert.ok(labels.includes(expected), `нет кнопки ${expected}: ${labels.join(", ")}`);
+  }
+  for (const moved of ["Сохранить", "Экспорт", "Импорт"]) {
+    assert.ok(!labels.includes(moved), `кнопка ${moved} перенесена в «Операции»`);
+  }
+  const menu = [...document.querySelectorAll("#operationsMenu > button")].map(b => b.textContent.trim());
+  for (const expected of ["Сохранить", "Экспорт", "Импорт"]) {
+    assert.ok(menu.includes(expected), `в «Операциях» нет ${expected}: ${menu.join(", ")}`);
   }
   ctx.click(ctx.globalButton("☰ Операции"));
   assert.equal(document.getElementById("operationsMenu").classList.contains("visible"), true);

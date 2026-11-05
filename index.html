@@ -733,10 +733,14 @@
         color: #9fb3e3;
         font-size: 12px;
       }
-      .dd-lock {
+      .dd-link {
+        display: inline-flex;
+        align-items: center;
         color: #5fd4a0;
-        font-size: 13px;
         cursor: help;
+      }
+      .dd-link svg {
+        display: block;
       }
       .dd-row.dd-part {
         border-style: dashed;
@@ -769,6 +773,33 @@
       }
       #appToast.show {
         display: block;
+        white-space: pre-line;
+      }
+      /* Режим «Заморозить для редактирования»: кнопка пульсирует голубым */
+      #freezeButton.active {
+        color: #e4f0ff;
+        background-color: #12408a;
+        border-color: #6aa7ff;
+        animation: freeze-pulse 1.3s ease-in-out infinite;
+      }
+      @keyframes freeze-pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 rgba(106, 167, 255, 0), 0 0 6px rgba(106, 167, 255, 0.45);
+        }
+        50% {
+          box-shadow: 0 0 0 4px rgba(106, 167, 255, 0.35), 0 0 18px rgba(106, 167, 255, 0.95);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #freezeButton.active {
+          animation: none;
+          box-shadow: 0 0 0 3px rgba(106, 167, 255, 0.7);
+        }
+      }
+      body.freeze-mode input[data-action="target-proportion"],
+      body.freeze-mode input[data-action="share"] {
+        outline: 1px dashed #6aa7ff;
       }
       .merge-list {
         max-height: 40vh;
@@ -800,6 +831,14 @@
         <input type="time" id="scheduleStart" value="00:00" />
       </label>
       <button data-action="add-timer">+ Добавить таймер</button>
+      <button
+        id="freezeButton"
+        data-action="freeze"
+        aria-pressed="false"
+        title="Пока кнопка нажата, Доли и Целевые пропорции можно вводить по одной: остальные не пересчитываются. При выходе значения применяются, если суммы равны 1, иначе возвращаются прежние"
+      >
+        Заморозить для редактирования
+      </button>
       <!-- Кнопка «Отошёл» убрана из интерфейса: её механизм (away-режим)
            теперь включается автоматически, пока не идёт отсчёт ни одного
            таймера (TimeManager.syncAutoAway). -->
@@ -809,11 +848,7 @@
         title="Носитель часового пояса"
       >
         🕒 Носитель часового пояса
-      </button>      <button id="saveTimersToLocalStorageManually" data-action="save">
-        Сохранить
       </button>
-      <button id="exportButton" data-action="export">Экспорт</button>
-      <button id="importButton" data-action="import">Импорт</button>
       <button
         id="cloudButton"
         data-action="cloud"
@@ -828,6 +863,11 @@
         <button data-action="create-group">Создать группу</button>
         <button data-action="create-in-group">Создать задачу внутри группы</button>
         <button data-action="day-builder">Конструктор дня</button>
+        <button id="saveTimersToLocalStorageManually" data-action="save">
+          Сохранить
+        </button>
+        <button id="exportButton" data-action="export">Экспорт</button>
+        <button id="importButton" data-action="import">Импорт</button>
       </div>
     </div>
     <div id="timersContainer"></div>
@@ -973,11 +1013,16 @@
             } else if (action === "day-builder") {
               MenuController.hide();
               DayBuilder.open();
+            } else if (action === "freeze") {
+              FreezeMode.toggle();
             } else if (action === "save") {
+              MenuController.hide();
               AppController.saveTimers();
             } else if (action === "export") {
+              MenuController.hide();
               AppController.exportTimers();
             } else if (action === "import") {
+              MenuController.hide();
               AppController.importTimers();
             } else if (action === "tz-holder") {
               TimeZoneHolder.claim();
@@ -1370,6 +1415,7 @@
           StorageService.exportTimersToFile();
         }
         static importTimers() {
+          FreezeMode.deactivate();
           StorageService.importTimersFromFile();
         }
       }
@@ -2138,10 +2184,12 @@
             } else if (action === "proportion") {
               this.handleProportionChange(target, timerId);
             } else if (action === "target-proportion") {
-              this.handleTargetProportionChange(target, timerId);
+              if (FreezeMode.active) FreezeMode.record(timerId, "target", target);
+              else this.handleTargetProportionChange(target, timerId);
             } else if (action === "share") {
               // Правка ДОЛИ — локальная: радиус действия своя папка (ТЗ 3.5.4)
-              TreeController.handleShareChange(target, timerId);
+              if (FreezeMode.active) FreezeMode.record(timerId, "share", target);
+              else TreeController.handleShareChange(target, timerId);
             }
           }
         }
@@ -3412,7 +3460,11 @@
           row.style.display = visible ? "" : "none";
           const input = document.getElementById(`share-${timer.id}`);
           if (!input || !visible) return;
-          const next = Number(TreeModel.shareOf(timer.id)).toFixed(4);
+          const next = FreezeMode.shown(
+            "share",
+            timer.id,
+            Number(TreeModel.shareOf(timer.id)).toFixed(4)
+          );
           // Не перезаписываем поле, пока пользователь в нём печатает
           if (document.activeElement !== input && input.value !== next) {
             input.value = next;
@@ -3569,7 +3621,9 @@
           const propInput = AppState.getTimerProportionElement(timer.id);
           if (propInput) propInput.value = String(timer.proportion);
           const targetInput = AppState.getTimerTargetProportionElement(timer.id);
-          if (targetInput) targetInput.value = String(timer.targetProportion);
+          if (targetInput) {
+            targetInput.value = FreezeMode.shown("target", timer.id, String(timer.targetProportion));
+          }
         }
         static updateTimerPlannedTime(timer) {
           const plannedElem = AppState.getTimerPlannedElement(timer.id);
@@ -4341,6 +4395,46 @@
           timer.targetProportion = newTarget;
           timer.proportion = newWeight;
           this.changed();
+          return true;
+        }
+
+        /**
+         * Применить сразу несколько долей одного уровня (режим заморозки):
+         * shareMap — id таймера → доля. Остальные сиблинги (таймеры и папки)
+         * масштабируются так, чтобы сумма уровня и сумма весов не изменились.
+         */
+        static setSharesBatch(siblings, shareMap) {
+          const pairs = (siblings || [])
+            .filter(n => this.isTimerNode(n) && shareMap.has(Number(n.id)))
+            .map(n => [n, this.timerById(n.id), this.clamp01(shareMap.get(Number(n.id)))])
+            .filter(x => x[1]);
+          if (!pairs.length) return false;
+          const sumP = pairs.reduce((a, x) => a + x[2], 0);
+          if (sumP > 1) pairs.forEach(x => (x[2] = x[2] / sumP));
+          const edited = new Set(pairs.map(x => x[0]));
+          const others = siblings.filter(n => !edited.has(n));
+          const sumT = this.levelSumNodes(siblings);
+          const sumW = this.levelWeightNodes(siblings);
+          const takenT = pairs.reduce((a, x) => a + x[2] * sumT, 0);
+          const takenW = pairs.reduce((a, x) => a + x[2] * sumW, 0);
+          const othersT = this.levelSumNodes(others);
+          const othersW = this.levelWeightNodes(others);
+          if (others.length) {
+            if (othersT > 0) {
+              const fT = (sumT - takenT) / othersT;
+              const fW = othersW > 0 ? (sumW - takenW) / othersW : 1;
+              others.forEach(n => this.scaleNode(n, fT, fW));
+            } else if (
+              sumT - takenT > 1e-12 &&
+              !this.distributeEqually(others, sumT - takenT, sumW - takenW)
+            ) {
+              return false;
+            }
+          }
+          pairs.forEach(([, timer, p]) => {
+            timer.targetProportion = p * sumT;
+            timer.proportion = p * sumW;
+          });
           return true;
         }
 
@@ -5177,6 +5271,7 @@
             end: 0,
             order: { root: [], folders: {} },
             startOnly: {},
+            slots: {},
           };
         }
         static norm(m) {
@@ -5249,7 +5344,9 @@
           out.start = n(obj.start);
           out.end = n(obj.end);
           const ids = a =>
-            Array.isArray(a) ? a.map(Number).filter(Number.isFinite) : [];
+            Array.isArray(a)
+              ? a.map(k => this.cleanKey(k)).filter(k => k !== null)
+              : [];
           if (obj.order && typeof obj.order === "object") {
             out.order.root = ids(obj.order.root);
             const folders = obj.order.folders || {};
@@ -5261,6 +5358,14 @@
             Object.keys(obj.startOnly).forEach(k => {
               const v = Number(obj.startOnly[k]);
               if (Number.isFinite(v)) out.startOnly[k] = this.norm(v);
+            });
+          }
+          if (obj.slots && typeof obj.slots === "object" && !Array.isArray(obj.slots)) {
+            Object.keys(obj.slots).forEach(k => {
+              if (!/^\d+(\.\d+)?~\d+$/.test(k)) return;
+              const raw = obj.slots[k];
+              const f = Number(raw && raw.f);
+              out.slots[k] = Number.isFinite(f) && f > 0 ? { f: Math.min(f, 1) } : {};
             });
           }
           return out;
@@ -5279,38 +5384,189 @@
         static isTimed(node) {
           return TreeModel.nodeTarget(node) > 1e-12;
         }
+        // --- слоты порядка: основной — число (id), Часть — строка «id~k» ------
+        // Часть — отрезок того же дела в другом месте суток (создаётся в окне
+        // «Конструктор дня» одноимённой сущностью). Время дела на основном
+        // экране — одно (Цель), а раскладка делит его между слотами:
+        // у таймера доли Частей хранятся в slots[«id~k»].f, остаток — основному.
+        static cleanKey(raw) {
+          if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+          const text = String(raw === null || raw === undefined ? "" : raw).trim();
+          if (/^\d+(\.\d+)?~\d+$/.test(text)) return text;
+          if (text !== "" && !text.includes("~") && Number.isFinite(Number(text))) {
+            return Number(text);
+          }
+          return null;
+        }
+        static slotId(key) {
+          return typeof key === "number"
+            ? key
+            : Number(String(key).split("~")[0]);
+        }
+        static partKeysOf(id) {
+          const slots = AppState.getSchedule().slots || {};
+          const prefix = `${Number(id)}~`;
+          return Object.keys(slots)
+            .filter(k => k.startsWith(prefix))
+            .sort((a, b) => Number(a.split("~")[1]) - Number(b.split("~")[1]));
+        }
+        static mainFrac(id) {
+          const slots = AppState.getSchedule().slots || {};
+          const used = this.partKeysOf(id).reduce(
+            (sum, k) => sum + (Number(slots[k] && slots[k].f) || 0),
+            0
+          );
+          return Math.max(0, 1 - used);
+        }
+        static slotFrac(key) {
+          if (typeof key === "number") return this.mainFrac(key);
+          const slots = AppState.getSchedule().slots || {};
+          return Number(slots[key] && slots[key].f) || 0;
+        }
+        static slotTarget(key) {
+          const sched = AppState.getSchedule();
+          const loc = TreeModel.findNode(this.slotId(key));
+          if (!loc) return 0;
+          if (TreeModel.isFolder(loc.node)) {
+            if (!Object.keys(sched.slots || {}).length) {
+              return TreeModel.nodeTarget(loc.node);
+            }
+            return (sched.order.folders[String(key)] || []).reduce(
+              (sum, k) => sum + this.slotTarget(k),
+              0
+            );
+          }
+          return TreeModel.nodeTarget(loc.node) * this.slotFrac(key);
+        }
+
         /**
          * Привести порядок по времени к текущему дереву: ушедшие/обнулённые
          * узлы выпадают, новые (Цель > 0) становятся ПОСЛЕДНИМИ в своём
          * уровне — в корне это «непосредственно перед промежутком» (11.3.5).
+         * Части: слот живёт, пока живо дело; Часть может лежать в корне или в
+         * контейнере слота своей родительской папки, остальное отбрасывается.
          */
         static reconcile() {
           const sched = AppState.getSchedule();
-          const fix = (list, children) => {
-            const want = (children || []).filter(
-              n => n && typeof n === "object" && this.isTimed(n)
-            );
-            const wantIds = new Set(want.map(n => Number(n.id)));
-            const kept = [];
-            (list || []).forEach(id => {
-              const num = Number(id);
-              if (wantIds.has(num) && !kept.includes(num)) kept.push(num);
-            });
-            want.forEach(n => {
-              const num = Number(n.id);
-              if (!kept.includes(num)) kept.push(num);
-            });
-            return kept;
-          };
-          sched.order.root = fix(sched.order.root, TreeModel.root());
-          const folders = {};
-          TreeModel.allFolderNodes().forEach(f => {
-            folders[String(f.id)] = fix(
-              sched.order.folders[String(f.id)],
-              f.children
-            );
+          if (!sched.slots) sched.slots = {};
+          const slots = sched.slots;
+          const idOf = key => this.slotId(key);
+          Object.keys(slots).forEach(key => {
+            const loc = TreeModel.findNode(idOf(key));
+            if (!loc) {
+              delete slots[key];
+              return;
+            }
+            if (TreeModel.isFolder(loc.node)) {
+              slots[key] = {};
+              return;
+            }
+            const f = Number(slots[key] && slots[key].f);
+            if (!this.isTimed(loc.node) || !(f > 0)) {
+              delete slots[key];
+              return;
+            }
+            slots[key] = { f };
           });
-          sched.order.folders = folders;
+          const perEntity = {};
+          Object.keys(slots).forEach(key => {
+            const loc = TreeModel.findNode(idOf(key));
+            if (loc && !TreeModel.isFolder(loc.node)) {
+              (perEntity[idOf(key)] = perEntity[idOf(key)] || []).push(key);
+            }
+          });
+          Object.keys(perEntity).forEach(id => {
+            const sum = perEntity[id].reduce((a, k) => a + slots[k].f, 0);
+            if (sum > 1) perEntity[id].forEach(k => (slots[k].f = slots[k].f / sum));
+          });
+
+          const old = sched.order || { root: [], folders: {} };
+          const out = { root: [], folders: {} };
+          TreeModel.allFolderNodes().forEach(f => {
+            out.folders[String(f.id)] = [];
+          });
+          const placed = new Set();
+          const okHere = (key, owner) => {
+            const id = idOf(key);
+            const loc = TreeModel.findNode(id);
+            if (!loc) return false;
+            if (typeof key === "string") {
+              if (!slots[key]) return false;
+            } else {
+              if (!this.isTimed(loc.node)) return false;
+              if (!TreeModel.isFolder(loc.node) && this.mainFrac(id) <= 1e-9) {
+                return false;
+              }
+            }
+            if (owner === null) return typeof key === "string" || !loc.parent;
+            return Boolean(loc.parent) && Number(loc.parent.id) === idOf(owner);
+          };
+          const walk = (arr, owner, into) => {
+            (arr || []).forEach(raw => {
+              const key = this.cleanKey(raw);
+              if (key === null || placed.has(String(key)) || !okHere(key, owner)) return;
+              placed.add(String(key));
+              into.push(key);
+              const loc = TreeModel.findNode(idOf(key));
+              if (TreeModel.isFolder(loc.node)) {
+                if (!out.folders[String(key)]) out.folders[String(key)] = [];
+                walk(old.folders[String(key)], key, out.folders[String(key)]);
+              }
+            });
+          };
+          walk(old.root, null, out.root);
+
+          const ensure = (nodes, defaultList) => {
+            (nodes || []).forEach(node => {
+              if (!node || typeof node !== "object" || !this.isTimed(node)) return;
+              const id = Number(node.id);
+              const folder = TreeModel.isFolder(node);
+              const need = [];
+              if (folder) {
+                const has = [id, ...this.partKeysOf(id)].some(k => placed.has(String(k)));
+                if (!has) need.push(id);
+              } else {
+                if (this.mainFrac(id) > 1e-9) need.push(id);
+                this.partKeysOf(id).forEach(k => need.push(k));
+              }
+              need.forEach(k => {
+                if (placed.has(String(k))) return;
+                placed.add(String(k));
+                defaultList.push(k);
+                if (folder && !out.folders[String(k)]) out.folders[String(k)] = [];
+              });
+              if (folder) {
+                const first = [id, ...this.partKeysOf(id)].find(k => placed.has(String(k)));
+                ensure(node.children || [], out.folders[String(first)]);
+              }
+            });
+          };
+          ensure(TreeModel.root(), out.root);
+
+          const prune = list => {
+            for (let i = list.length - 1; i >= 0; i--) {
+              const key = list[i];
+              const loc = TreeModel.findNode(idOf(key));
+              if (!loc || !TreeModel.isFolder(loc.node)) continue;
+              const sub = out.folders[String(key)] || [];
+              prune(sub);
+              if (!sub.length) {
+                list.splice(i, 1);
+                placed.delete(String(key));
+                if (typeof key === "string") {
+                  delete slots[key];
+                  delete out.folders[String(key)];
+                }
+              }
+            }
+          };
+          prune(out.root);
+          Object.keys(slots).forEach(key => {
+            if (!placed.has(key)) delete slots[key];
+          });
+
+          sched.order.root = out.root;
+          sched.order.folders = out.folders;
           // начала элементов без конца живут, пока у элемента нет Цели
           Object.keys(sched.startOnly).forEach(k => {
             const loc = TreeModel.findNode(Number(k));
@@ -5339,30 +5595,35 @@
           const S = sched.start;
           const D = this.dur(S, sched.end);
           const map = new Map();
+          const all = [];
           const rootList = [];
-          const place = (ids, start, span, out) => {
-            const locs = ids
-              .map(id => TreeModel.findNode(id))
-              .filter(Boolean);
-            const total = locs.reduce(
-              (sum, loc) => sum + TreeModel.nodeTarget(loc.node),
-              0
-            );
+          const place = (keys, start, span, out, parentKey) => {
+            const items = keys
+              .map(key => ({ key, loc: TreeModel.findNode(this.slotId(key)) }))
+              .filter(it => it.loc);
+            const targets = items.map(it => this.slotTarget(it.key));
+            const total = targets.reduce((sum, t) => sum + t, 0);
             let cur = start;
-            locs.forEach(loc => {
-              const t = TreeModel.nodeTarget(loc.node);
-              const d = total > 0 ? (t / total) * span : 0;
-              const entry = { id: Number(loc.node.id), s: cur, d };
+            items.forEach((it, i) => {
+              const d = total > 0 ? (targets[i] / total) * span : 0;
+              const entry = {
+                id: it.key,
+                nodeId: Number(it.loc.node.id),
+                parentKey,
+                s: cur,
+                d,
+              };
               map.set(entry.id, entry);
+              all.push(entry);
               if (out) out.push(entry);
-              if (TreeModel.isFolder(loc.node)) {
-                place(sched.order.folders[String(loc.node.id)] || [], cur, d);
+              if (TreeModel.isFolder(it.loc.node)) {
+                place(sched.order.folders[String(it.key)] || [], cur, d, undefined, it.key);
               }
               cur += d;
             });
           };
-          place(sched.order.root, S, D, rootList);
-          return { map, root: rootList, S, E: sched.end, D };
+          place(sched.order.root, S, D, rootList, null);
+          return { map, all, root: rootList, S, E: sched.end, D };
         }
         static layout() {
           this.syncFromFields();
@@ -5504,6 +5765,18 @@
           draft.E = sched.end;
           draft.saved = sched.saved;
           const SM = ScheduleModel;
+          const stamp = (entry, place) => {
+            if (!place || !(place.d > 0)) return false;
+            const a = Math.round(place.s);
+            const b = Math.round(place.s + place.d);
+            entry.s = SM.norm(a);
+            entry.e = SM.normEnd(b);
+            // минимум минута, полные сутки остаются полными сутками
+            if (b - a < 1 && place.d < 1439.5) {
+              entry.e = SM.normEnd(entry.s + 1);
+            }
+            return true;
+          };
           const walk = (nodes, parent) => {
             (nodes || []).forEach(node => {
               const id = Number(node.id);
@@ -5519,17 +5792,7 @@
                 isNew: false,
                 seq: ++draft.seqCounter,
               };
-              const place = lay.map.get(id);
-              if (place && place.d > 0) {
-                const a = Math.round(place.s);
-                const b = Math.round(place.s + place.d);
-                entry.s = SM.norm(a);
-                entry.e = SM.normEnd(b);
-                // минимум минута, полные сутки остаются полными сутками
-                if (b - a < 1 && place.d < 1439.5) {
-                  entry.e = SM.normEnd(entry.s + 1);
-                }
-              } else if (sched.startOnly[String(id)] !== undefined) {
+              if (!stamp(entry, lay.map.get(id)) && sched.startOnly[String(id)] !== undefined) {
                 entry.s = SM.norm(sched.startOnly[String(id)]);
               }
               draft.nodes.set(id, entry);
@@ -5537,6 +5800,39 @@
             });
           };
           walk(TreeModel.root(), null);
+          // Части дел (отрезки в других местах суток) живут в окне как обычные
+          // сущности с тем же названием; основная сущность, лежащая в слоте
+          // Части группы, показывается внутри неё (при сохранении вернётся домой)
+          const slotNode = new Map();
+          lay.all.forEach(place => {
+            const pk = place.parentKey;
+            const parentNode =
+              pk === null ? null : typeof pk === "number" ? pk : slotNode.get(pk);
+            if (typeof place.id === "number") {
+              const own = draft.nodes.get(place.id);
+              if (own && typeof pk === "string" && parentNode !== undefined) {
+                own.parent = parentNode;
+              }
+              return;
+            }
+            const main = draft.nodes.get(place.nodeId);
+            if (!main) return;
+            const part = {
+              id: --draft.tempSeq,
+              kind: main.kind,
+              name: main.name,
+              parent: parentNode === undefined ? null : parentNode,
+              s: null,
+              e: null,
+              isNew: true,
+              seq: ++draft.seqCounter,
+            };
+            stamp(part, place);
+            if (part.kind === "f") part.mirrored = true;
+            if (typeof pk === "string") part.home = part.parent;
+            draft.nodes.set(part.id, part);
+            slotNode.set(place.id, part.id);
+          });
           return draft;
         }
         clone() {
@@ -5647,9 +5943,29 @@
         rename(id, name) {
           const n = this.get(id);
           if (!n) return false;
-          n.name = String(name === null || name === undefined ? "" : name);
+          const L = this.links().main;
+          const clean = String(name === null || name === undefined ? "" : name);
+          // у основной сущности Части переименовываются вместе с ней; Часть,
+          // названная иначе, перестаёт быть Частью и живёт самостоятельно
+          if (!L.has(n.id)) {
+            this.all().forEach(p => {
+              if (L.get(p.id) === n.id) p.name = clean;
+            });
+          }
+          n.name = clean;
           this.mirrorIfPart(n);
           return true;
+        }
+        /** Родитель на основном экране: Части групп «растворяются» в основной. */
+        treeParent(n) {
+          const L = this.links().main;
+          let par = n.parent;
+          let guard = 0;
+          while (par !== null && L.has(par) && guard++ < 64) par = L.get(par);
+          return par;
+        }
+        treeChildren(id) {
+          return this.all().filter(n => !this.isPart(n) && this.treeParent(n) === id);
         }
 
         // --- Части (одноимённые сущности) ------------------------------------
@@ -5716,8 +6032,7 @@
           if (mainId === undefined || this.children(node.id).length) return;
           node.mirrored = true;
           const copy = (srcId, dstId) => {
-            this.children(srcId).forEach(c => {
-              if (this.isPart(c)) return;
+            this.treeChildren(srcId).forEach(c => {
               const clone = {
                 id: --this.tempSeq,
                 kind: c.kind,
@@ -6030,10 +6345,20 @@
           linkInfo.main.forEach((mainId, partId) => {
             const p = this.get(partId);
             const m = this.get(mainId);
-            const allowed =
-              p.home !== undefined && p.home !== null
-                ? new Set([p.home])
-                : new Set([null, m.parent]);
+            let allowed;
+            if (p.home !== undefined && p.home !== null) {
+              allowed = new Set([p.home]);
+            } else {
+              // корень, группа основной сущности или Часть этой группы
+              allowed = new Set([null]);
+              const tp = this.treeParent(m);
+              if (tp !== null) {
+                allowed.add(tp);
+                linkInfo.main.forEach((gid, pid) => {
+                  if (gid === tp) allowed.add(pid);
+                });
+              }
+            }
             if (!allowed.has(p.parent)) {
               err("part-parent", [p.id],
                 `Часть «${p.name}» нельзя помещать в другую группу или выносить из группы`);
@@ -6189,34 +6514,61 @@
           // Части свёрнуты в основные сущности: их время прибавляется к ним
           const fd = this.fold();
           const f = fd.draft;
+          const L = this.links().main;
           const extraOf = n => fd.extra.get(n.id) || 0;
           const own = n => (f.timed(n) ? f.duration(n) : 0) + extraOf(n);
-          const effTimed = n =>
-            f.isGroup(n)
-              ? f.timed(n) || f.descendants(n.id).some(c => effTimed(c))
-              : f.timed(n) || extraOf(n) > 0;
           const targets = new Map();
           f.all()
             .filter(n => n.kind === "t")
             .forEach(n => {
               targets.set(n.id, total > 0 ? own(n) / total : 0);
             });
-          const key = (n, base) => {
-            const cands = [];
-            if (f.timed(n)) cands.push(SM.norm(n.s - base));
-            (fd.anchors.get(n.id) || []).forEach(st => cands.push(SM.norm(st - base)));
-            return cands.length ? Math.min(...cands) : 1e9;
-          };
+          // Слоты расписания: основная сущность и каждая Часть со временем.
+          // Раскладка помнит, где стоят Части, поэтому при повторном открытии
+          // окна они снова видны отдельно (склеиваются только цели на экране)
+          const slotTimed = n =>
+            this.isGroup(n)
+              ? this.timed(n) || this.children(n.id).some(slotTimed)
+              : this.timed(n);
+          const partsOf = new Map();
+          this.all()
+            .filter(n => L.has(n.id))
+            .sort((a, b) => a.seq - b.seq)
+            .forEach(p => {
+              const m = L.get(p.id);
+              if (!partsOf.has(m)) partsOf.set(m, []);
+              partsOf.get(m).push(p);
+            });
+          const slots = [];
+          partsOf.forEach((list, mainId) => {
+            const main = f.get(mainId);
+            const ownTotal = main ? own(main) : 0;
+            let k = 0;
+            list.forEach(p => {
+              if (!slotTimed(p)) return;
+              k++;
+              slots.push({
+                id: p.id,
+                main: mainId,
+                k,
+                f: p.kind === "t" && ownTotal > 0 ? this.duration(p) / ownTotal : 0,
+              });
+            });
+          });
           const sortBy = (list, base) =>
             list
               .slice()
-              .sort((p, q) => key(p, base) - key(q, base))
+              .sort(
+                (p, q) =>
+                  (this.timed(p) ? SM.norm(p.s - base) : 1e9) -
+                  (this.timed(q) ? SM.norm(q.s - base) : 1e9)
+              )
               .map(n => n.id);
-          const order = { root: sortBy(f.children(null).filter(effTimed), ref), folders: {} };
-          f.all()
-            .filter(n => f.isGroup(n))
+          const order = { root: sortBy(this.children(null).filter(slotTimed), ref), folders: {} };
+          this.all()
+            .filter(n => this.isGroup(n))
             .forEach(g => {
-              const kids = f.children(g.id).filter(effTimed);
+              const kids = this.children(g.id).filter(slotTimed);
               if (!kids.length) return;
               order.folders[g.id] = sortBy(kids, g.s !== null ? g.s : ref);
             });
@@ -6224,7 +6576,7 @@
           f.all().forEach(n => {
             if (n.s !== null && n.e === null) startOnly[n.id] = n.s;
           });
-          return { ok: true, S, E, targets, order, startOnly, hasTime: rootTimed.length > 0 };
+          return { ok: true, S, E, targets, order, slots, startOnly, hasTime: rootTimed.length > 0 };
         }
 
         /** Перенести черновик на основной экран (кнопка «Сохранить»). */
@@ -6327,7 +6679,15 @@
           TreeModel.changed();
           // расписание
           const sched = AppState.getSchedule();
-          const mapIds = ids => ids.map(i => idMap.get(i)).filter(i => i !== undefined);
+          const partSlot = new Map();
+          plan.slots.forEach(sl => partSlot.set(sl.id, sl));
+          const keyOf = draftId => {
+            const sl = partSlot.get(draftId);
+            if (!sl) return idMap.get(draftId);
+            const real = idMap.get(sl.main);
+            return real === undefined ? undefined : `${real}~${sl.k}`;
+          };
+          const mapIds = ids => ids.map(keyOf).filter(i => i !== undefined);
           sched.saved = true;
           if (plan.hasTime) {
             sched.start = plan.S;
@@ -6335,8 +6695,14 @@
           }
           sched.order = { root: mapIds(plan.order.root), folders: {} };
           Object.keys(plan.order.folders).forEach(k => {
-            const real = idMap.get(Number(k));
+            const real = keyOf(Number(k));
             if (real !== undefined) sched.order.folders[String(real)] = mapIds(plan.order.folders[k]);
+          });
+          sched.slots = {};
+          plan.slots.forEach(sl => {
+            const real = idMap.get(sl.main);
+            if (real === undefined) return;
+            sched.slots[`${real}~${sl.k}`] = sl.f > 0 ? { f: sl.f } : {};
           });
           sched.startOnly = {};
           Object.keys(plan.startOnly).forEach(k => {
@@ -6384,6 +6750,7 @@
           return this.isActive() && ModalController.isOpen();
         }
         static open() {
+          FreezeMode.deactivate();
           ScheduleModel.syncFromFields();
           this.draft = DayDraft.fromMain();
           this.mode = "list";
@@ -6490,17 +6857,16 @@
           el.appendChild(this.el("span", { class: "dd-kind" }, kind));
           if (part) {
             const main = draft.mainOf(n);
-            el.appendChild(
-              this.el(
-                "span",
-                {
-                  class: "dd-lock",
-                  title: `Связано с «${main ? main.name : ""}»: время добавится к основной сущности`,
-                  "data-dd-part-of": main ? String(main.id) : "",
-                },
-                "🔒"
-              )
-            );
+            const link = this.el("span", {
+              class: "dd-link",
+              role: "img",
+              "aria-label": "Связано с основной сущностью",
+              title: `Связано с «${main ? main.name : ""}»: время добавится к основной сущности`,
+              "data-dd-part-of": main ? String(main.id) : "",
+            });
+            link.innerHTML =
+              '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+            el.appendChild(link);
           }
           el.appendChild(
             this.el("input", {
@@ -6826,13 +7192,13 @@
           }
           return base;
         }
-        static toast(message) {
+        static toast(message, ms) {
           const el = document.getElementById("appToast");
           if (!el) return;
           el.textContent = message;
           el.classList.add("show");
           clearTimeout(this._toastTimer);
-          this._toastTimer = setTimeout(() => el.classList.remove("show"), 5500);
+          this._toastTimer = setTimeout(() => el.classList.remove("show"), ms || 5500);
         }
       }
 
@@ -7124,6 +7490,203 @@
           }
           ModalController.close();
           return this.mergeIntoNewTimer(ctx.nodeId, checked, name);
+        }
+      }
+
+      // ============================================================
+      //  «Заморозить для редактирования». Пока режим включён, правки Долей и
+      //  Целевых пропорций только запоминаются (поля показывают введённое, а
+      //  остальные значения не пересчитываются). При выключении: если суммы
+      //  сошлись в 1 — всё применяется разом, иначе красная ошибка и откат
+      //  к значениям, которые были до включения.
+      // ============================================================
+      class FreezeMode {
+        static EPS = 5e-4;
+        static active = false;
+        static targets = new Map();
+        static shares = new Map();
+        static button() {
+          return document.getElementById("freezeButton");
+        }
+        static toggle() {
+          if (this.active) this.deactivate();
+          else this.activate();
+        }
+        static activate() {
+          if (this.active) return;
+          this.active = true;
+          this.targets.clear();
+          this.shares.clear();
+          this.render();
+        }
+        static render() {
+          const btn = this.button();
+          if (btn) {
+            btn.classList.toggle("active", this.active);
+            btn.setAttribute("aria-pressed", this.active ? "true" : "false");
+          }
+          if (document.body) document.body.classList.toggle("freeze-mode", this.active);
+        }
+        /** Что показать в поле: введённое пользователем или значение модели. */
+        static shown(kind, id, fallback) {
+          if (!this.active) return fallback;
+          const map = kind === "share" ? this.shares : this.targets;
+          if (!map.has(Number(id))) return fallback;
+          const v = map.get(Number(id));
+          return kind === "share" ? Number(v).toFixed(4) : String(v);
+        }
+        static record(timerId, kind, input) {
+          const id = Number(timerId);
+          const parsed = Utils.parseShareInput(input.value);
+          if (!Number.isFinite(parsed)) {
+            const timer = AppState.findTimerById(id);
+            input.value = this.shown(
+              kind,
+              id,
+              kind === "share"
+                ? Number(TreeModel.shareOf(id)).toFixed(4)
+                : String(timer ? timer.targetProportion : 0)
+            );
+            return false;
+          }
+          const v = TreeModel.clamp01(parsed);
+          (kind === "share" ? this.shares : this.targets).set(id, v);
+          input.value = kind === "share" ? v.toFixed(4) : String(v);
+          return true;
+        }
+        static fmt(sum) {
+          return String(Number(sum.toFixed(4)));
+        }
+        static validate() {
+          const errors = [];
+          [this.targets, this.shares].forEach(map =>
+            Array.from(map.keys()).forEach(id => {
+              if (!AppState.findTimerById(id)) map.delete(id);
+            })
+          );
+          if (this.targets.size) {
+            const sum = AppState.getTimers().reduce((acc, t) => {
+              const id = Number(t.id);
+              return (
+                acc +
+                (this.targets.has(id)
+                  ? this.targets.get(id)
+                  : Number(t.targetProportion) || 0)
+              );
+            }, 0);
+            if (Math.abs(sum - 1) > this.EPS) {
+              errors.push(
+                `Целевые пропорции в сумме дают ${this.fmt(sum)}, а должны давать 1`
+              );
+            }
+          }
+          const groups = new Map();
+          this.shares.forEach((v, id) => {
+            const loc = TreeModel.findNode(id);
+            if (!loc || !loc.parent || loc.siblings.length < 2) return;
+            if (!groups.has(loc.siblings)) groups.set(loc.siblings, loc.parent);
+          });
+          groups.forEach((parent, siblings) => {
+            const sum = siblings.reduce((acc, n) => {
+              const id = Number(n.id);
+              return acc + (this.shares.has(id) ? this.shares.get(id) : TreeModel.shareOf(id));
+            }, 0);
+            if (Math.abs(sum - 1) > this.EPS) {
+              errors.push(
+                `Доли в группе «${parent.name || "без названия"}» в сумме дают ${this.fmt(sum)}, а должны давать 1`
+              );
+            }
+          });
+          return errors;
+        }
+        static applyTargets() {
+          const timers = AppState.getTimers();
+          if (!this.targets.size || !timers.length) return;
+          const idOf = t => Number(t.id);
+          const final = new Map(
+            timers.map(t => [
+              idOf(t),
+              this.targets.has(idOf(t)) ? this.targets.get(idOf(t)) : Number(t.targetProportion) || 0,
+            ])
+          );
+          const total = () => Array.from(final.values()).reduce((a, v) => a + v, 0);
+          const sum = total();
+          if (Math.abs(sum - 1) > 1e-12 && sum > 0) {
+            // допуск суммы: поправку берут на себя нетронутые таймеры
+            const free = timers.filter(t => !this.targets.has(idOf(t)));
+            const freeSum = free.reduce((a, t) => a + final.get(idOf(t)), 0);
+            if (free.length && freeSum > 0 && freeSum + 1 - sum >= 0) {
+              const k = (freeSum + 1 - sum) / freeSum;
+              free.forEach(t => final.set(idOf(t), final.get(idOf(t)) * k));
+            } else {
+              const k = 1 / sum;
+              final.forEach((v, id) => final.set(id, v * k));
+            }
+          }
+          const totalWeight = timers.reduce((a, t) => a + (Number(t.proportion) || 0), 0);
+          const editedW = timers
+            .filter(t => this.targets.has(idOf(t)))
+            .reduce((a, t) => a + final.get(idOf(t)) * totalWeight, 0);
+          const rest = timers.filter(t => !this.targets.has(idOf(t)));
+          const restW = rest.reduce((a, t) => a + (Number(t.proportion) || 0), 0);
+          timers.forEach(t => {
+            const id = idOf(t);
+            if (this.targets.has(id)) {
+              t.proportion = final.get(id) * totalWeight;
+            } else if (restW > 0) {
+              t.proportion = (Number(t.proportion) || 0) * ((totalWeight - editedW) / restW);
+            } else if (rest.length) {
+              t.proportion = (totalWeight - editedW) / rest.length;
+            }
+            t.targetProportion = final.get(id);
+          });
+        }
+        static applySharesAll() {
+          const seen = new Set();
+          this.shares.forEach((v, id) => {
+            const loc = TreeModel.findNode(id);
+            if (!loc || seen.has(loc.siblings)) return;
+            seen.add(loc.siblings);
+            TreeModel.setSharesBatch(loc.siblings, this.shares);
+          });
+        }
+        /** Выключить режим. Возвращает true, если правки применены (или их не было). */
+        static deactivate() {
+          if (!this.active) return true;
+          const hadEdits = this.targets.size + this.shares.size > 0;
+          const errors = hadEdits ? this.validate() : [];
+          let applied = true;
+          if (errors.length) {
+            applied = false;
+          } else if (hadEdits) {
+            SessionManager.clearJustAfterResetFlag();
+            this.applyTargets();
+            this.applySharesAll();
+            TreeModel.changed();
+          }
+          this.active = false;
+          this.targets.clear();
+          this.shares.clear();
+          this.render();
+          if (hadEdits) {
+            TimerView.syncAllProportionInputs();
+            if (applied) {
+              if (AppState.getGlobalEndTime()) {
+                TimeManager.updateGlobalEndTimeAndPlans(null, null, false);
+              }
+              CalculationService.updateCalculations();
+              AppController.calculateRecommendations();
+              StorageService.saveTimersToLocalStorage();
+              CloudSync.bumpControl();
+            }
+          }
+          if (errors.length) {
+            NameRules.toast(
+              errors.join("\n") + "\nЗначения возвращены к тем, что были до заморозки",
+              9000
+            );
+          }
+          return applied;
         }
       }
 

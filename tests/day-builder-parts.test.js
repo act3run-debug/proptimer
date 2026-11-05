@@ -108,12 +108,13 @@ test("Часть видна в окне с замком и подписью, н�
   const byKind = k => rows.filter(r => r.querySelector(".dd-kind").textContent === k);
   const parts = byKind("Часть активности");
   assert.equal(parts.length, 1);
-  const lock = parts[0].querySelector(".dd-lock");
+  const lock = parts[0].querySelector(".dd-link");
   assert.ok(lock, "замок");
-  assert.equal(lock.textContent, "🔒");
+  assert.ok(lock.querySelector("svg"), "значок — звенья цепи (svg), а не замок");
+  assert.equal(lock.querySelectorAll("path").length, 2, "два звена");
   assert.match(lock.getAttribute("title"), /Связано с «Йога»/);
   assert.ok(parts[0].classList.contains("dd-part"));
-  const plain = rows.filter(r => !r.querySelector(".dd-lock"));
+  const plain = rows.filter(r => !r.querySelector(".dd-link"));
   assert.equal(plain.length, 2, "основная Йога и Прогулка — без замка");
   ctx.DayBuilder.close();
   ctx.close();
@@ -242,7 +243,7 @@ test("основная в группе остаётся в своей иерар
   ctx.close();
 });
 
-test("после «Сохранить» в окне одна активность на всё суммарное время — Частей уже нет", () => {
+test("после «Сохранить» Часть остаётся в окне отдельной сущностью (склеиваются только цели на экране)", () => {
   const { ctx } = world([["Йога", 0.5], ["Работа", 0.5]]);
   const d = D(ctx);
   put(d, first(d, "Йога"), "9:00", "10:00");
@@ -250,9 +251,15 @@ test("после «Сохранить» в окне одна активност�
   d.createActivity("Йога", hm("11:00"), hm("12:00"));
   d.commit();
   const again = D(ctx);
-  assert.equal(named(again, "Йога").length, 1);
-  assert.equal(again.all().filter(n => again.isPart(n)).length, 0);
-  assert.equal(again.duration(first(again, "Йога")), 120, "1 ч + 1 ч");
+  assert.equal(named(again, "Йога").length, 2, "основная и Часть");
+  assert.equal(again.all().filter(n => again.isPart(n)).length, 1);
+  const main = first(again, "Йога");
+  const part = named(again, "Йога")[1];
+  assert.equal(again.isPart(main), false);
+  assert.equal(again.isPart(part), true);
+  assert.equal(again.duration(main), 60, "1 ч");
+  assert.equal(again.duration(part), 60, "1 ч");
+  assert.equal(ctx.AppState.getTimers().length, 2, "таймер на экране один");
   ctx.close();
 });
 
@@ -319,7 +326,7 @@ test("в окне замок стоит у Части группы и у каж�
   ctx.DayBuilder.open();
   ctx.DayBuilder.draft.createGroup("Курс");
   ctx.DayBuilder.render();
-  const locked = Array.from(ctx.document.querySelectorAll("#ddList .dd-row")).filter(r => r.querySelector(".dd-lock"));
+  const locked = Array.from(ctx.document.querySelectorAll("#ddList .dd-row")).filter(r => r.querySelector(".dd-link"));
   assert.equal(locked.length, 5, "группа + Лекции + Практика + Задачи + Тесты");
   ctx.DayBuilder.close();
   ctx.close();
@@ -544,7 +551,7 @@ test("окно: создать одноимённую активность, за
   ctx.document.getElementById("ddNewStart").value = "17:00";
   ctx.document.getElementById("ddNewEnd").value = "18:00";
   ctx.click(ctx.document.getElementById("ddCreateConfirm"));
-  const partRow = Array.from(ctx.document.querySelectorAll("#ddList .dd-row")).find(r => r.querySelector(".dd-lock"));
+  const partRow = Array.from(ctx.document.querySelectorAll("#ddList .dd-row")).find(r => r.querySelector(".dd-link"));
   assert.ok(partRow, "у новой строки зелёный замок");
   assert.equal(partRow.querySelector(".dd-start").value, "17:00");
   ctx.click(ctx.document.getElementById("ddSave"));
